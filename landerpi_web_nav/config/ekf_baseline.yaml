@@ -1,0 +1,38 @@
+# EKF baseline: same fusion the stock EKF effectively does today
+# (controller/config/ekf.yaml lists odom_rf2o too, but no stock launch ever
+# starts rf2o, so in practice it only fuses odom_raw + IMU). Stage 1 compares
+# this against ekf_rf2o.yaml.
+#
+# odom_raw is dead-reckoning integrated from the commanded cmd_vel (no wheel
+# encoders on this robot): only its velocities are fused, never its pose.
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.5
+    two_d_mode: true
+    publish_tf: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom
+
+    odom0: /odom_raw
+    # [x y z, roll pitch yaw, vx vy vz, vroll vpitch vyaw, ax ay az]
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+    odom0_queue_size: 2
+
+    imu0: /imu
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_relative: true
+    imu0_differential: false
+    imu0_queue_size: 5
+    imu0_remove_gravitational_acceleration: true
