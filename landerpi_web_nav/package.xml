@@ -13,6 +13,11 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>rclcpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
+
   <!-- Stock Hiwonder packages used at runtime only (landerpi_description,
        rf2o_laser_odometry, imu_calib, calibration) are deliberately not
        declared: they are not in rosdep and CI runs on a clean ros:humble. -->
@@ -25,6 +30,7 @@
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

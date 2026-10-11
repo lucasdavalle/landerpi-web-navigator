@@ -21,7 +21,9 @@ odom_publisher, publishing /odom_raw) and the lidar (/scan_raw) are already
 running, as left by tools/robot_reset.sh.
 
 rf2o always runs and publishes /odom_rf2o (no TF) so it can be recorded and
-compared; whether the EKF fuses it depends on ekf_config.
+compared; whether the EKF fuses it depends on ekf_config. covariance_stamper
+republishes /odom_rf2o, /odom_raw and /imu under /a7/ with realistic
+covariances (the drivers publish zeros); ekf_rf2o.yaml consumes those.
 """
 
 import os
@@ -40,6 +42,7 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('landerpi_web_nav')
 
     ekf_config = LaunchConfiguration('ekf_config')
+    stamper_config = LaunchConfiguration('stamper_config')
     urdf_path = LaunchConfiguration('urdf_path')
     imu_calib_file = LaunchConfiguration('imu_calib_file')
 
@@ -48,6 +51,10 @@ def generate_launch_description():
             'ekf_config',
             default_value=os.path.join(pkg_share, 'config', 'ekf_baseline.yaml'),
             description='EKF parameters file (baseline or rf2o fusion)'),
+        DeclareLaunchArgument(
+            'stamper_config',
+            default_value=os.path.join(pkg_share, 'config', 'covariance_stamper.yaml'),
+            description='covariance_stamper parameters'),
         DeclareLaunchArgument(
             'urdf_path',
             default_value=os.path.join(
@@ -114,6 +121,13 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', 'WARN'],
     )
 
+    covariance_stamper = Node(
+        package='landerpi_web_nav',
+        executable='covariance_stamper_node',
+        name='covariance_stamper',
+        parameters=[stamper_config],
+    )
+
     ekf = Node(
         package='robot_localization',
         executable='ekf_node',
@@ -128,5 +142,6 @@ def generate_launch_description():
         imu_calib,
         imu_filter,
         rf2o,
+        covariance_stamper,
         ekf,
     ])
