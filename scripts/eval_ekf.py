@@ -9,7 +9,7 @@
 # of the filtered pose is pure error.
 #
 # Usage (inside MentorPi, as root, with the workspaces sourced):
-#   python3 eval_ekf.py <bag_dir> <ekf_yaml> [stamper_yaml] [--rate 3]
+#   python3 eval_ekf.py <bag_dir> <ekf_yaml> [stamper_yaml] [--rate 3] [--domain 77]
 import argparse
 import math
 import os
@@ -22,7 +22,6 @@ import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
-DOMAIN = '77'
 URDF = '/home/ubuntu/ros2_ws/src/simulations/landerpi_description/urdf/landerpi.xacro'
 
 
@@ -54,10 +53,11 @@ def main():
     ap.add_argument('ekf_yaml')
     ap.add_argument('stamper_yaml', nargs='?')
     ap.add_argument('--rate', default='3')
+    ap.add_argument('--domain', default='77', help='isolated ROS_DOMAIN_ID')
     a = ap.parse_args()
 
-    env = dict(os.environ, ROS_DOMAIN_ID=DOMAIN)
-    os.environ['ROS_DOMAIN_ID'] = DOMAIN
+    env = dict(os.environ, ROS_DOMAIN_ID=a.domain)
+    os.environ['ROS_DOMAIN_ID'] = a.domain
     procs = []
 
     def start(cmd):
