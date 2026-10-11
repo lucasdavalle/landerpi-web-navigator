@@ -10,6 +10,7 @@
 #
 # Usage (inside MentorPi, as root, with the workspaces sourced):
 #   python3 eval_ekf.py <bag_dir> <ekf_yaml> [stamper_yaml] [--rate 3] [--domain 77]
+#       [--rf2o bag|raw|centered] [--probe /eval/odom] [--no-ekf] [--out traj.csv]
 import argparse
 import math
 import os
@@ -31,13 +32,14 @@ def yaw(q):
 
 class Probe(Node):
 
-    def __init__(self):
+    def __init__(self, topic):
         super().__init__('eval_probe', parameter_overrides=[
             rclpy.parameter.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)])
         self.first = None
         self.last = None
         self.count = 0
-        self.create_subscription(Odometry, '/eval/odom', self.cb, 50)
+        self.rows = []  # (stamp_s, x, y, yaw) for rpe.py
+        self.create_subscription(Odometry, topic, self.cb, 50)
 
     def cb(self, m):
         p = m.pose.pose
@@ -45,6 +47,8 @@ class Probe(Node):
         self.first = self.first or cur
         self.last = cur
         self.count += 1
+        st = m.header.stamp
+        self.rows.append((st.sec + st.nanosec * 1e-9,) + cur)
 
 
 def main():
@@ -54,6 +58,12 @@ def main():
     ap.add_argument('stamper_yaml', nargs='?')
     ap.add_argument('--rate', default='3')
     ap.add_argument('--domain', default='77', help='isolated ROS_DOMAIN_ID')
+    ap.add_argument('--out', help='CSV with the full filtered trajectory (for rpe.py)')
+    ap.add_argument('--rf2o', choices=['bag', 'raw', 'centered'], default='bag',
+                    help='bag: replay the recorded /odom_rf2o; raw/centered: recompute rf2o '
+                         'from the bag /scan_raw, as recorded or through scan_recenter')
+    ap.add_argument('--probe', default='/eval/odom', help='Odometry topic to evaluate')
+    ap.add_argument('--no-ekf', action='store_true', help='do not run the EKF')
     a = ap.parse_args()
 
     env = dict(os.environ, ROS_DOMAIN_ID=a.domain)
@@ -70,17 +80,30 @@ def main():
     if a.stamper_yaml:
         start(['ros2', 'run', 'landerpi_web_nav', 'covariance_stamper_node', '--ros-args',
                '--params-file', a.stamper_yaml, '-p', 'use_sim_time:=true'])
-    start(['ros2', 'run', 'robot_localization', 'ekf_node', '--ros-args',
-           '-r', '__node:=ekf_filter_node', '--params-file', a.ekf_yaml,
-           '-p', 'use_sim_time:=true', '-p', 'publish_tf:=false',
-           '-r', 'odometry/filtered:=/eval/odom'])
+    if a.rf2o != 'bag':
+        scan_topic = '/scan_raw'
+        if a.rf2o == 'centered':
+            scan_topic = '/a7/scan_centered'
+            start(['ros2', 'run', 'landerpi_web_nav', 'scan_recenter_node', '--ros-args',
+                   '-p', 'use_sim_time:=true'])
+        start(['ros2', 'run', 'rf2o_laser_odometry', 'rf2o_laser_odometry_node', '--ros-args',
+               '-p', f'laser_scan_topic:={scan_topic}', '-p', 'odom_topic:=/odom_rf2o',
+               '-p', 'publish_tf:=false', '-p', 'base_frame_id:=base_footprint',
+               '-p', 'odom_frame_id:=odom', '-p', 'init_pose_from_topic:=',
+               '-p', 'freq:=10.0', '-p', 'use_sim_time:=true'])
+    if not a.no_ekf:
+        start(['ros2', 'run', 'robot_localization', 'ekf_node', '--ros-args',
+               '-r', '__node:=ekf_filter_node', '--params-file', a.ekf_yaml,
+               '-p', 'use_sim_time:=true', '-p', 'publish_tf:=false',
+               '-r', 'odometry/filtered:=/eval/odom'])
 
     rclpy.init()
-    probe = Probe()
+    probe = Probe(a.probe)
     time.sleep(4)  # let the nodes come up before the first message
     play = subprocess.Popen(
         ['ros2', 'bag', 'play', a.bag, '--clock', '--rate', a.rate,
-         '--topics', '/odom_raw', '/odom_rf2o', '/imu'],
+         '--topics', '/odom_raw', '/imu',
+         *(['/odom_rf2o'] if a.rf2o == 'bag' else ['/scan_raw'])],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     while play.poll() is None:
         rclpy.spin_once(probe, timeout_sec=0.1)
@@ -96,6 +119,9 @@ def main():
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
 
+    if a.out and probe.rows:
+        with open(a.out, 'w') as f:
+            f.writelines(f'{t:.6f},{x:.6f},{y:.6f},{th:.6f}\n' for t, x, y, th in probe.rows)
     if not probe.first:
         print('SIN SALIDA del EKF (/eval/odom vacío)')
         return 1

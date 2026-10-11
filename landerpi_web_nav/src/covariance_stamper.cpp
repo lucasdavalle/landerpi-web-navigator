@@ -67,6 +67,10 @@ CovarianceStamper::CovarianceStamper(const OdomNoiseModel & model)
   validateStddevs(model_.twist_stddev_base, "twist_stddev_base");
   validateStddevs(model_.twist_stddev_per_mps, "twist_stddev_per_mps");
   validateStddevs(model_.twist_stddev_per_radps, "twist_stddev_per_radps");
+  validateStddevs(model_.twist_stddev_at_rest, "twist_stddev_at_rest");
+  if (!std::isfinite(model_.zero_velocity_threshold)) {
+    throw std::invalid_argument("zero_velocity_threshold must be finite");
+  }
   validatePositive(model_.max_plausible_speed, "max_plausible_speed");
   validatePositive(model_.max_plausible_yaw_rate, "max_plausible_yaw_rate");
   pose_covariance_ = diagonalCovariance(model_.pose_stddev);
@@ -93,6 +97,15 @@ OdomCovariances CovarianceStamper::stamp(double vx, double vy, double wz) const
 
   out.pose = pose_covariance_;
   const double yaw_rate = std::abs(wz);
+  const double threshold = model_.zero_velocity_threshold;
+  if (threshold >= 0.0 && std::abs(vx) <= threshold && std::abs(vy) <= threshold &&
+    yaw_rate <= threshold)
+  {
+    out.at_rest = true;
+    out.twist = diagonalCovariance(model_.twist_stddev_at_rest);
+    return out;
+  }
+
   Dof6 twist_stddev{};
   for (std::size_t i = 0; i < 6; ++i) {
     twist_stddev[i] = model_.twist_stddev_base[i] +

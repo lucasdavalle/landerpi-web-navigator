@@ -109,6 +109,43 @@ TEST(CovarianceStamper, YawNoiseGrowsWhenTurningInPlace)
   EXPECT_DOUBLE_EQ(left.twist[kX], 0.01 * 0.01);
 }
 
+TEST(CovarianceStamper, ZeroVelocityUpdateIsOffByDefault)
+{
+  const CovarianceStamper stamper{slipModel()};
+  const auto out = stamper.stamp(0.0, 0.0, 0.0);
+  EXPECT_FALSE(out.at_rest);
+  EXPECT_DOUBLE_EQ(out.twist[kX], 0.01 * 0.01);
+}
+
+TEST(CovarianceStamper, ZeroVelocityUpdateAnchorsAStillRobot)
+{
+  auto model = slipModel();
+  model.zero_velocity_threshold = 0.0;  // exact zero, as odom_raw reports
+  model.twist_stddev_at_rest = {0.001, 0.001, 1.0, 1.0, 1.0, 0.001};
+  const CovarianceStamper stamper{model};
+
+  const auto still = stamper.stamp(0.0, 0.0, 0.0);
+  EXPECT_TRUE(still.at_rest);
+  EXPECT_DOUBLE_EQ(still.twist[kX], 0.001 * 0.001);
+  EXPECT_DOUBLE_EQ(still.twist[kYaw], 0.001 * 0.001);
+  // Pose covariance is unaffected.
+  EXPECT_DOUBLE_EQ(still.pose[kX], 0.05 * 0.05);
+
+  // Any motion, even only rotation, leaves the at-rest branch.
+  EXPECT_FALSE(stamper.stamp(0.0, 0.0, 0.05).at_rest);
+  EXPECT_FALSE(stamper.stamp(-0.02, 0.0, 0.0).at_rest);
+}
+
+TEST(CovarianceStamper, ZeroVelocityThresholdToleratesTinyValues)
+{
+  auto model = slipModel();
+  model.zero_velocity_threshold = 0.005;
+  model.twist_stddev_at_rest = {0.001, 0.001, 1.0, 1.0, 1.0, 0.001};
+  const CovarianceStamper stamper{model};
+  EXPECT_TRUE(stamper.stamp(0.004, -0.003, 0.005).at_rest);
+  EXPECT_FALSE(stamper.stamp(0.006, 0.0, 0.0).at_rest);
+}
+
 TEST(CovarianceStamper, RejectsImplausibleSpeed)
 {
   const CovarianceStamper stamper{slipModel()};
@@ -143,6 +180,10 @@ TEST(CovarianceStamper, RejectsInvalidModels)
   auto nan_stddev = slipModel();
   nan_stddev.twist_stddev_per_mps[0] = std::nan("");
   EXPECT_THROW(CovarianceStamper{nan_stddev}, std::invalid_argument);
+
+  auto bad_rest = slipModel();
+  bad_rest.twist_stddev_at_rest[0] = -0.001;
+  EXPECT_THROW(CovarianceStamper{bad_rest}, std::invalid_argument);
 
   auto zero_limit = slipModel();
   zero_limit.max_plausible_speed = 0.0;

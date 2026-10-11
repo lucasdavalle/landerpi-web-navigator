@@ -97,6 +97,8 @@ void CovarianceStamperNode::setUpOdomChannel(const std::string & name)
   model.twist_stddev_base = declareDof6(p + "twist_stddev_base");
   model.twist_stddev_per_mps = declareDof6(p + "twist_stddev_per_mps");
   model.twist_stddev_per_radps = declareDof6(p + "twist_stddev_per_radps");
+  model.zero_velocity_threshold = declare_parameter<double>(p + "zero_velocity_threshold", -1.0);
+  model.twist_stddev_at_rest = declareDof6(p + "twist_stddev_at_rest");
   model.max_plausible_speed = declare_parameter<double>(p + "max_plausible_speed", 1.0);
   model.max_plausible_yaw_rate = declare_parameter<double>(p + "max_plausible_yaw_rate", 3.0);
 

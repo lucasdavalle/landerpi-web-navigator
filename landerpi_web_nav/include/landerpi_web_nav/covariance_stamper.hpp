@@ -49,6 +49,16 @@ struct OdomNoiseModel
   // planar speed but is where the mecanum wheels slip the most (stage 0:
   // odom_raw ended 78 deg off).
   Dof6 twist_stddev_per_radps{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  // Zero-velocity update (ZUPT). When |vx|, |vy| and |wz| are all at or
+  // below zero_velocity_threshold, the robot is known to be still and the
+  // twist is stamped with twist_stddev_at_rest instead of the speed model.
+  // Meant for odom_raw: it is the command itself, so an exact zero means the
+  // motors are off and the robot cannot be moving (unless pushed); a tight
+  // covariance there keeps the EKF from integrating rf2o's jitter at rest
+  // (stage 1: 62 cm of fake motion in 70 s still). A negative threshold
+  // disables it (the default).
+  double zero_velocity_threshold = -1.0;
+  Dof6 twist_stddev_at_rest{0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   // Physical plausibility gate: a measurement faster than this is treated as
   // a glitch (rf2o occasionally jumps) and stamped with kRejectedVariance so
   // the EKF effectively ignores it. The real chassis tops out well below.
@@ -70,6 +80,8 @@ struct OdomCovariances
   Covariance6 twist{};
   // True when the measurement failed the plausibility gate.
   bool rejected = false;
+  // True when the zero-velocity update applied.
+  bool at_rest = false;
 };
 
 struct ImuCovariances

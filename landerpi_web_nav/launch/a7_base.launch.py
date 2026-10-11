@@ -107,11 +107,21 @@ def generate_launch_description():
                     ('imu/data', '/imu')],
     )
 
+    # rf2o ignores angle_min and assumes a [-pi, pi) scan; this lidar
+    # publishes 0..2pi, which made rf2o report translation reversed.
+    scan_recenter = Node(
+        package='landerpi_web_nav',
+        executable='scan_recenter_node',
+        name='scan_recenter',
+        parameters=[{'input_topic': '/scan_raw',
+                     'output_topic': '/a7/scan_centered'}],
+    )
+
     rf2o = Node(
         package='rf2o_laser_odometry',
         executable='rf2o_laser_odometry_node',
         name='rf2o_laser_odometry',
-        parameters=[{'laser_scan_topic': '/scan_raw',
+        parameters=[{'laser_scan_topic': '/a7/scan_centered',
                      'odom_topic': '/odom_rf2o',
                      'publish_tf': False,
                      'base_frame_id': 'base_footprint',
@@ -141,6 +151,7 @@ def generate_launch_description():
         robot_state_publisher,
         imu_calib,
         imu_filter,
+        scan_recenter,
         rf2o,
         covariance_stamper,
         ekf,

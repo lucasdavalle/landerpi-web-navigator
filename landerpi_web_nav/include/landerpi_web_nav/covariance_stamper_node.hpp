@@ -38,6 +38,7 @@ namespace landerpi_web_nav
 //   <channel>.input_topic / <channel>.output_topic
 //   <channel>.pose_stddev / twist_stddev_base (6 values)
 //   <channel>.twist_stddev_per_mps / twist_stddev_per_radps (6 values)
+//   <channel>.zero_velocity_threshold (< 0 disables) / twist_stddev_at_rest (6)
 //   <channel>.max_plausible_speed / max_plausible_yaw_rate
 //   imu.enabled, imu.input_topic / imu.output_topic
 //   imu.orientation_stddev / angular_velocity_stddev / linear_acceleration_stddev (3)

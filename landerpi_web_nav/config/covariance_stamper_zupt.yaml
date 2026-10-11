@@ -1,0 +1,50 @@
+# Realistic covariances for the EKF inputs (none of the drivers report real
+# ones). Order of the 6-value arrays: x, y, z, roll, pitch, yaw.
+# Starting values measured in the stage-0 bag with the robot still (53 s
+# before the first cmd_vel); per-speed terms are first guesses tuned offline.
+# z/roll/pitch are not fused (two_d_mode), they just get a large stddev.
+# Variant with zero-velocity update (ZUPT) on odom_raw.
+covariance_stamper:
+  ros__parameters:
+    odom_channels: ["rf2o", "raw"]
+
+    rf2o:
+      input_topic: /odom_rf2o
+      output_topic: /a7/odom_rf2o
+      # Pose: fused differentially by the EKF (rf2o's twist has no vy).
+      pose_stddev: [0.02, 0.02, 1.0, 1.0, 1.0, 0.02]
+      # Measured at rest: vx 0.060 m/s, wz 0.067 rad/s. vy is always exactly
+      # 0 in rf2o's twist, so it gets a huge stddev (never trust it).
+      twist_stddev_base: [0.06, 10.0, 1.0, 1.0, 1.0, 0.067]
+      twist_stddev_per_mps: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      twist_stddev_per_radps: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      max_plausible_speed: 1.0
+      max_plausible_yaw_rate: 3.0
+
+    raw:
+      input_topic: /odom_raw
+      output_topic: /a7/odom_raw
+      # Pose of odom_raw is never fused (dead-reckoning of the command).
+      pose_stddev: [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+      # Exactly 0 at rest (it is the command itself); its error is slip,
+      # which grows with speed and, above all, with turning.
+      twist_stddev_base: [0.01, 0.01, 1.0, 1.0, 1.0, 0.01]
+      twist_stddev_per_mps: [0.3, 0.5, 0.0, 0.0, 0.0, 0.3]
+      twist_stddev_per_radps: [0.1, 0.1, 0.0, 0.0, 0.0, 0.5]
+      # ZUPT: an exact zero command means the motors are off, the robot is
+      # still. Tight covariance so rf2o's jitter at rest is not integrated.
+      zero_velocity_threshold: 0.0
+      twist_stddev_at_rest: [0.001, 0.001, 1.0, 1.0, 1.0, 0.001]
+      max_plausible_speed: 1.0
+      max_plausible_yaw_rate: 3.0
+
+    imu:
+      enabled: true
+      input_topic: /imu
+      output_topic: /a7/imu
+      # Yaw from the complementary filter drifts (no magnetometer), so its
+      # orientation is trusted loosely; the gyro is excellent (0.0018 rad/s
+      # measured at rest).
+      orientation_stddev: [0.05, 0.05, 0.1]
+      angular_velocity_stddev: [0.002, 0.002, 0.002]
+      linear_acceleration_stddev: [0.05, 0.05, 0.05]
