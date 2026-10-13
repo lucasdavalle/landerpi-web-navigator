@@ -10,6 +10,7 @@ find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # Pure logic, no rclcpp dependency: own target so it can be gtest-ed without
 # bringing up rclcpp.
@@ -24,6 +25,21 @@ target_include_directories(scan_recenter PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_compile_features(scan_recenter PUBLIC cxx_std_17)
+
+add_library(line_extractor src/line_extractor.cpp)
+target_include_directories(line_extractor PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(line_extractor PUBLIC cxx_std_17)
+
+# Only this one needs OpenCV (findContours); line_extractor stays pure.
+add_library(map_contours src/map_contours.cpp)
+target_include_directories(map_contours PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(map_contours PUBLIC line_extractor ${OpenCV_LIBS})
+target_compile_features(map_contours PUBLIC cxx_std_17)
 
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
@@ -48,7 +64,7 @@ target_link_libraries(scan_recenter_node scan_recenter_node_lib)
 ament_target_dependencies(scan_recenter_node rclcpp)
 
 install(TARGETS covariance_stamper covariance_stamper_node_lib
-  scan_recenter scan_recenter_node_lib
+  scan_recenter scan_recenter_node_lib line_extractor map_contours
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
@@ -72,6 +88,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_scan_recenter test/test_scan_recenter.cpp)
   target_link_libraries(test_scan_recenter scan_recenter)
+
+  ament_add_gtest(test_line_extractor test/test_line_extractor.cpp)
+  target_link_libraries(test_line_extractor line_extractor)
+
+  ament_add_gtest(test_map_contours test/test_map_contours.cpp)
+  target_link_libraries(test_map_contours map_contours)
+  target_compile_definitions(test_map_contours PRIVATE
+    TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/data")
 endif()
 
 ament_package()

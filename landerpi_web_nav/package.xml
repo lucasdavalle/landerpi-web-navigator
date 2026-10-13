@@ -17,6 +17,7 @@
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_srvs</depend>
+  <depend>libopencv-dev</depend>
 
   <!-- Stock Hiwonder packages used at runtime only (landerpi_description,
        rf2o_laser_odometry, imu_calib, calibration) are deliberately not
