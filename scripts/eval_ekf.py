@@ -17,6 +17,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 import rclpy
@@ -69,10 +70,14 @@ def main():
     env = dict(os.environ, ROS_DOMAIN_ID=a.domain)
     os.environ['ROS_DOMAIN_ID'] = a.domain
     procs = []
+    log_dir = f'/tmp/a7_eval_logs/{a.domain}'
+    os.makedirs(log_dir, exist_ok=True)
 
     def start(cmd):
-        procs.append(subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL,
-                                      stderr=subprocess.DEVNULL, start_new_session=True))
+        # Each process logs to its own file: errors used to vanish silently.
+        log = open(os.path.join(log_dir, cmd[3] + '.log'), 'w')
+        procs.append(subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                      start_new_session=True))
 
     urdf = subprocess.run(['xacro', URDF], capture_output=True, text=True, check=True).stdout
     start(['ros2', 'run', 'robot_state_publisher', 'robot_state_publisher', '--ros-args',
@@ -86,11 +91,18 @@ def main():
             scan_topic = '/a7/scan_centered'
             start(['ros2', 'run', 'landerpi_web_nav', 'scan_recenter_node', '--ros-args',
                    '-p', 'use_sim_time:=true'])
+        # Via a params file: an empty value ('-p init_pose_from_topic:=') is
+        # rejected on the command line and rf2o aborts at startup.
+        rf2o_params = tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False)
+        rf2o_params.write(
+            'rf2o_laser_odometry:\n  ros__parameters:\n'
+            f'    laser_scan_topic: {scan_topic}\n    odom_topic: /odom_rf2o\n'
+            '    publish_tf: false\n    base_frame_id: base_footprint\n'
+            "    odom_frame_id: odom\n    init_pose_from_topic: ''\n"
+            '    freq: 10.0\n    use_sim_time: true\n')
+        rf2o_params.close()
         start(['ros2', 'run', 'rf2o_laser_odometry', 'rf2o_laser_odometry_node', '--ros-args',
-               '-p', f'laser_scan_topic:={scan_topic}', '-p', 'odom_topic:=/odom_rf2o',
-               '-p', 'publish_tf:=false', '-p', 'base_frame_id:=base_footprint',
-               '-p', 'odom_frame_id:=odom', '-p', 'init_pose_from_topic:=',
-               '-p', 'freq:=10.0', '-p', 'use_sim_time:=true'])
+               '-r', '__node:=rf2o_laser_odometry', '--params-file', rf2o_params.name])
     if not a.no_ekf:
         start(['ros2', 'run', 'robot_localization', 'ekf_node', '--ros-args',
                '-r', '__node:=ekf_filter_node', '--params-file', a.ekf_yaml,
