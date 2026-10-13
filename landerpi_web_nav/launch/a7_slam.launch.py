@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stage 0: a7_base (TF + odometry) plus slam_toolbox mapping (async)."""
+"""a7_base (TF + odometry) + slam_toolbox mapping (async) + wall_vectorizer."""
 
 import os
 
@@ -57,4 +57,12 @@ def generate_launch_description():
         parameters=[slam_config, {'use_sim_time': False}],
     )
 
-    return LaunchDescription(args + [base, slam])
+    # Live map -> wall segments as RViz markers on /a7/walls (stage 2).
+    walls = Node(
+        package='landerpi_web_nav',
+        executable='wall_vectorizer_node',
+        name='wall_vectorizer',
+        parameters=[os.path.join(pkg_share, 'config', 'wall_vectorizer.yaml')],
+    )
+
+    return LaunchDescription(args + [base, slam, walls])

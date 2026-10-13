@@ -1,0 +1,23 @@
+# Live map -> wall segments (stage 2). Same names as declare_parameter in
+# wall_vectorizer_node.cpp; values tuned on the stage-0 room map.
+wall_vectorizer:
+  ros__parameters:
+    method: free_space        # free_space | skeleton | contours
+    rate_hz: 1.0
+    base_frame: base_footprint
+    line_width: 0.04          # m, marker thickness in RViz
+    # MapContours
+    occupied_threshold: 65
+    free_threshold: 25
+    wall_adjacency_cells: 2
+    close_radius_cells: 1
+    # LineExtractor
+    max_gap: 0.15
+    split_distance: 0.08
+    merge_angle: 0.14         # rad (~8 deg)
+    merge_distance: 0.12
+    merge_gap: 0.25
+    min_points: 5
+    min_length: 0.30
+    corner_min_angle: 0.52    # rad (~30 deg)
+    corner_max_extension: 0.35

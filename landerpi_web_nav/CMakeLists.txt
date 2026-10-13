@@ -11,6 +11,10 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 # Pure logic, no rclcpp dependency: own target so it can be gtest-ed without
 # bringing up rclcpp.
@@ -63,19 +67,32 @@ add_executable(scan_recenter_node src/scan_recenter_node_main.cpp)
 target_link_libraries(scan_recenter_node scan_recenter_node_lib)
 ament_target_dependencies(scan_recenter_node rclcpp)
 
+add_library(wall_vectorizer_node_lib src/wall_vectorizer_node.cpp)
+target_include_directories(wall_vectorizer_node_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(wall_vectorizer_node_lib map_contours line_extractor)
+ament_target_dependencies(wall_vectorizer_node_lib
+  rclcpp nav_msgs std_srvs tf2 tf2_ros geometry_msgs visualization_msgs)
+
+add_executable(wall_vectorizer_node src/wall_vectorizer_node_main.cpp)
+target_link_libraries(wall_vectorizer_node wall_vectorizer_node_lib)
+ament_target_dependencies(wall_vectorizer_node rclcpp)
+
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
+  wall_vectorizer_node_lib
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 
-install(TARGETS covariance_stamper_node scan_recenter_node
+install(TARGETS covariance_stamper_node scan_recenter_node wall_vectorizer_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
   DESTINATION include)
 
-install(DIRECTORY launch config
+install(DIRECTORY launch config rviz
   DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
