@@ -61,6 +61,13 @@ struct LineExtractorConfig
   // Output filter: drops clutter (chair legs, objects against a wall).
   std::size_t min_points = 5;
   double min_length = 0.30;  // m
+  // Corner closing: two segments meeting at an angle of at least
+  // corner_min_angle, with ends close to where their lines cross, are both
+  // extended (or trimmed) to that crossing point, so walls meet in a clean
+  // corner instead of leaving a gap. corner_max_extension bounds how far an
+  // end may move; 0 disables the step.
+  double corner_min_angle = 0.52;      // rad (~30 deg)
+  double corner_max_extension = 0.35;  // m
 };
 
 // Split-and-merge line extraction (map contours -> wall segments). Pure: no
@@ -68,7 +75,8 @@ struct LineExtractorConfig
 class LineExtractor
 {
 public:
-  // Throws std::invalid_argument on non-positive or non-finite thresholds.
+  // Throws std::invalid_argument on non-positive or non-finite thresholds
+  // (corner_max_extension may be 0 to disable corner closing).
   explicit LineExtractor(const LineExtractorConfig & config);
 
   std::vector<Segment> extract(const std::vector<PointChain> & chains) const;
@@ -78,6 +86,10 @@ public:
 private:
   LineExtractorConfig config_;
 };
+
+// Corner closing step (see LineExtractorConfig), exposed for tests. Each
+// segment end is moved at most once, to the nearest qualifying crossing.
+void closeCorners(std::vector<Segment> & segments, double min_angle, double max_extension);
 
 // Total least squares fit (principal direction of the points), with the
 // segment ends at the projections of the extreme points. Exposed for tests.

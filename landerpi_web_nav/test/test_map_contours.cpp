@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <opencv2/imgcodecs.hpp>
@@ -55,6 +56,20 @@ MapContoursConfig contoursMethod()
 {
   MapContoursConfig c;
   c.method = WallTracing::kContours;
+  return c;
+}
+
+MapContoursConfig skeletonMethod()
+{
+  MapContoursConfig c;
+  c.method = WallTracing::kSkeleton;
+  return c;
+}
+
+MapContoursConfig freeSpaceFrom(double x, double y)
+{
+  MapContoursConfig c;  // kFreeSpace is the default
+  c.seed = landerpi_web_nav::Point2{x, y};
   return c;
 }
 
@@ -93,13 +108,17 @@ TEST(MapContours, SyntheticRoomGivesFourWalls)
     data[i * n + (n - 1)] = 100;    // right column
   }
   const GridView grid{n, n, 0.05, -1.0, -1.0, &data};
-  for (const auto & cfg : {MapContoursConfig{}, contoursMethod()}) {
+  // Wall-cell centres span (n - 1) cells; the free-space method traces the
+  // inner face, the free cells next to the walls, which span (n - 3).
+  const std::vector<std::pair<MapContoursConfig, double>> cases{
+    {skeletonMethod(), 1.95}, {contoursMethod(), 1.95}, {freeSpaceFrom(0.0, 0.0), 1.85}};
+  for (const auto & [cfg, expected] : cases) {
     const auto contours = occupiedContours(grid, cfg);
     ASSERT_FALSE(contours.empty());
     const auto segs = LineExtractor{LineExtractorConfig{}}.extract(contours);
     ASSERT_EQ(segs.size(), 4u);
     for (const auto & s : segs) {
-      EXPECT_NEAR(s.length(), 1.95, 0.1);  // cell centers: (n - 1) * 0.05
+      EXPECT_NEAR(s.length(), expected, 0.06);
     }
   }
 }
@@ -162,7 +181,7 @@ TEST(MapContours, ThickWallGivesOneCentredLine)
   const GridView grid{w, h, 0.05, 0.0, 0.0, &data};
   const LineExtractor extractor{LineExtractorConfig{}};
 
-  const auto skel = extractor.extract(occupiedContours(grid, MapContoursConfig{}));
+  const auto skel = extractor.extract(occupiedContours(grid, skeletonMethod()));
   ASSERT_EQ(skel.size(), 1u);
   EXPECT_NEAR(skel[0].start.y, 10.0 * 0.05, 0.05);  // centre of rows 8..11
   EXPECT_NEAR(skel[0].length(), 2.4, 0.2);
@@ -182,10 +201,74 @@ TEST(MapContours, CellCentersMapToWorldCoordinates)
   }
   const GridView grid{w, h, 0.05, 1.0, 2.0, &data};
   const auto segs = LineExtractor{LineExtractorConfig{}}.extract(
-    occupiedContours(grid, MapContoursConfig{}));
+    occupiedContours(grid, skeletonMethod()));
   ASSERT_EQ(segs.size(), 1u);
   EXPECT_NEAR(segs[0].start.y, 2.0 + 10.5 * 0.05, 1e-6);
   EXPECT_NEAR(std::min(segs[0].start.x, segs[0].end.x), 1.0 + 5.5 * 0.05, 1e-6);
+}
+
+TEST(MapContours, FreeSpaceRoomWithADoor)
+{
+  // 40x40 room, 1-cell walls, a 10-cell door in the right wall (rows
+  // 15..24) opening onto unknown space. Inside free, outside unknown.
+  const int n = 40;
+  std::vector<int8_t> data(n * n, -1);
+  for (int r = 1; r < n - 1; ++r) {
+    for (int c = 1; c < n - 1; ++c) {
+      data[r * n + c] = 0;
+    }
+  }
+  for (int i = 0; i < n; ++i) {
+    data[i] = 100;
+    data[(n - 1) * n + i] = 100;
+    data[i * n] = 100;
+    if (i < 15 || i > 24) {
+      data[i * n + (n - 1)] = 100;
+    } else {
+      data[i * n + (n - 1)] = 0;  // the door: free, leading out to unknown
+    }
+  }
+  const GridView grid{n, n, 0.05, 0.0, 0.0, &data};
+  auto cfg = freeSpaceFrom(1.0, 1.0);
+  cfg.close_radius_cells = 0;  // keep the door open for this test
+  const auto segs = LineExtractor{LineExtractorConfig{}}.extract(occupiedContours(grid, cfg));
+  // Left, top, bottom, and the right wall split in two by the door.
+  ASSERT_EQ(segs.size(), 5u);
+  // Corners are closed exactly at the inner faces: the free cells next to
+  // the walls, centres at 1.5 and 38.5 cells.
+  const double lo = 1.5 * 0.05;
+  const double hi = 38.5 * 0.05;
+  int corners = 0;
+  for (const auto & s : segs) {
+    for (const auto & p : {s.start, s.end}) {
+      const bool x_edge = std::abs(p.x - lo) < 0.02 || std::abs(p.x - hi) < 0.02;
+      const bool y_edge = std::abs(p.y - lo) < 0.02 || std::abs(p.y - hi) < 0.02;
+      corners += x_edge && y_edge;
+    }
+  }
+  EXPECT_EQ(corners, 8);  // 4 room corners, each shared by two segments
+}
+
+TEST(MapContours, FreeSpaceIgnoresObjectsOnTheFloor)
+{
+  // Closed 40x40 room with a 4x4 box in the middle: only the 4 walls.
+  const int n = 40;
+  std::vector<int8_t> data(n * n, 0);
+  for (int i = 0; i < n; ++i) {
+    data[i] = 100;
+    data[(n - 1) * n + i] = 100;
+    data[i * n] = 100;
+    data[i * n + (n - 1)] = 100;
+  }
+  for (int r = 18; r < 22; ++r) {
+    for (int c = 18; c < 22; ++c) {
+      data[r * n + c] = 100;
+    }
+  }
+  const GridView grid{n, n, 0.05, 0.0, 0.0, &data};
+  const auto segs = LineExtractor{LineExtractorConfig{}}.extract(
+    occupiedContours(grid, freeSpaceFrom(0.3, 0.3)));
+  EXPECT_EQ(segs.size(), 4u);
 }
 
 TEST(MapContours, UnknownAndFreeCellsAreNotWalls)
@@ -216,10 +299,12 @@ TEST(MapContours, RealRoomFromStageZero)
   const auto data = loadTrinaryPgm(std::string(TEST_DATA_DIR) + "/stage0_room.pgm", w, h);
   const GridView grid{w, h, 0.05, -3.62, -4.34, &data};
   const LineExtractor extractor{LineExtractorConfig{}};
-  const auto segs = extractor.extract(occupiedContours(grid, MapContoursConfig{}));
+  // Seed (0, 0): the map frame origin is where SLAM started, inside the room.
+  const auto segs = extractor.extract(occupiedContours(grid, freeSpaceFrom(0.0, 0.0)));
+  const auto skel_segs = extractor.extract(occupiedContours(grid, skeletonMethod()));
   const auto face_segs = extractor.extract(occupiedContours(grid, contoursMethod()));
   // The skeleton never gives more segments than tracing both faces.
-  EXPECT_LE(segs.size(), face_segs.size());
+  EXPECT_LE(skel_segs.size(), face_segs.size());
 
   std::vector<Segment> walls;
   for (const auto & s : segs) {
@@ -265,7 +350,8 @@ TEST(MapContours, RealRoomFromStageZero)
           s.length(), angleDeg(s), s.start.x, s.start.y, s.end.x, s.end.y);
       }
     }
-    draw(segs, "stage0_room_skeleton.png");
+    draw(segs, "stage0_room_freespace.png");
+    draw(skel_segs, "stage0_room_skeleton.png");
     draw(face_segs, "stage0_room_contours.png");
   }
 }

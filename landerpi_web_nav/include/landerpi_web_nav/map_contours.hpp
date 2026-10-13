@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -45,13 +46,26 @@ enum class WallTracing
   // Zhang-Suen thinning to a 1-cell-wide skeleton, then traced into
   // polylines: one line along the middle of each wall, however thick.
   kSkeleton,
+  // Boundary of the free-space region the robot is in, kept only where it
+  // touches a wall: the inner face of the room's walls, in order, with gaps
+  // where the boundary meets unknown space (open doors, unexplored areas).
+  // Islands inside the room (objects on the floor) are ignored.
+  kFreeSpace,
 };
 
 struct MapContoursConfig
 {
-  WallTracing method = WallTracing::kSkeleton;
+  WallTracing method = WallTracing::kFreeSpace;
   // Cells at or above this occupancy count as walls (map_saver uses 65).
   int occupied_threshold = 65;
+  // kFreeSpace: cells in [0, free_threshold) are free (map_saver uses 25).
+  int free_threshold = 25;
+  // kFreeSpace: a boundary cell counts as wall face when an occupied cell
+  // lies within this many cells of it.
+  int wall_adjacency_cells = 2;
+  // kFreeSpace: a point inside the region to trace (the robot position, in
+  // world coordinates). Without it, the largest free region is used.
+  std::optional<Point2> seed;
   // Morphological closing radius in cells: joins walls broken by a missing
   // cell or two, so a wall comes out as one contour instead of several.
   int close_radius_cells = 1;
@@ -59,7 +73,8 @@ struct MapContoursConfig
 
 // Occupied cells -> ordered point chains in world coordinates (cell
 // centers), by the configured method. kContours gives closed chains,
-// kSkeleton open ones (closed for rings with no ends). Throws
+// kSkeleton open ones (closed for rings with no ends), kFreeSpace open
+// chains along wall faces (one closed chain if the room is fully walled). Throws
 // std::invalid_argument on an inconsistent grid (size mismatch,
 // non-positive resolution).
 std::vector<PointChain> occupiedContours(const GridView & grid, const MapContoursConfig & config);

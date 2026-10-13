@@ -15,8 +15,10 @@
 #include "landerpi_web_nav/line_extractor.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -183,7 +185,88 @@ bool mergeable(const Candidate & a, const Candidate & b, const LineExtractorConf
   return gapAlong(a, b) <= cfg.merge_gap;
 }
 
+// Crossing point of the infinite lines through two segments, or nullopt if
+// they are (nearly) parallel.
+std::optional<Point2> lineCrossing(const Segment & a, const Segment & b)
+{
+  const double ax = a.end.x - a.start.x;
+  const double ay = a.end.y - a.start.y;
+  const double bx = b.end.x - b.start.x;
+  const double by = b.end.y - b.start.y;
+  const double den = ax * by - ay * bx;
+  if (std::abs(den) < 1e-12) {
+    return std::nullopt;
+  }
+  const double t = ((b.start.x - a.start.x) * by - (b.start.y - a.start.y) * bx) / den;
+  return Point2{a.start.x + t * ax, a.start.y + t * ay};
+}
+
+double undirectedAngle(const Segment & a, const Segment & b)
+{
+  const double aa = std::atan2(a.end.y - a.start.y, a.end.x - a.start.x);
+  const double ab = std::atan2(b.end.y - b.start.y, b.end.x - b.start.x);
+  double d = std::fmod(std::abs(aa - ab), kPi);
+  return std::min(d, kPi - d);
+}
+
 }  // namespace
+
+void closeCorners(std::vector<Segment> & segments, double min_angle, double max_extension)
+{
+  if (max_extension <= 0.0) {
+    return;
+  }
+  // Every (segment end, segment end) pair that could form a corner, cheapest
+  // first, applied greedily so each end moves at most once.
+  struct Move
+  {
+    double cost;
+    std::size_t i;
+    int end_i;  // 0 = start, 1 = end
+    std::size_t j;
+    int end_j;
+    Point2 corner;
+  };
+  auto end_of = [&](std::size_t k, int e) -> Point2 & {
+      return e == 0 ? segments[k].start : segments[k].end;
+    };
+
+  std::vector<Move> moves;
+  for (std::size_t i = 0; i < segments.size(); ++i) {
+    for (std::size_t j = i + 1; j < segments.size(); ++j) {
+      if (undirectedAngle(segments[i], segments[j]) < min_angle) {
+        continue;
+      }
+      const auto corner = lineCrossing(segments[i], segments[j]);
+      if (!corner) {
+        continue;
+      }
+      for (int ei = 0; ei < 2; ++ei) {
+        for (int ej = 0; ej < 2; ++ej) {
+          const double di = distance(end_of(i, ei), *corner);
+          const double dj = distance(end_of(j, ej), *corner);
+          if (di <= max_extension && dj <= max_extension) {
+            moves.push_back({di + dj, i, ei, j, ej, *corner});
+          }
+        }
+      }
+    }
+  }
+  std::sort(
+    moves.begin(), moves.end(), [](const Move & a, const Move & b) {
+      return a.cost < b.cost;
+    });
+  std::vector<std::array<bool, 2>> used(segments.size(), {false, false});
+  for (const auto & m : moves) {
+    if (used[m.i][m.end_i] || used[m.j][m.end_j]) {
+      continue;
+    }
+    end_of(m.i, m.end_i) = m.corner;
+    end_of(m.j, m.end_j) = m.corner;
+    used[m.i][m.end_i] = true;
+    used[m.j][m.end_j] = true;
+  }
+}
 
 double Segment::length() const {return distance(start, end);}
 
@@ -242,6 +325,10 @@ LineExtractor::LineExtractor(const LineExtractorConfig & config)
   validatePositive(config_.merge_distance, "merge_distance");
   validatePositive(config_.merge_gap, "merge_gap");
   validatePositive(config_.min_length, "min_length");
+  validatePositive(config_.corner_min_angle, "corner_min_angle");
+  if (!std::isfinite(config_.corner_max_extension) || config_.corner_max_extension < 0.0) {
+    throw std::invalid_argument("corner_max_extension must be finite and >= 0");
+  }
   if (config_.min_points < 2) {
     throw std::invalid_argument("min_points must be >= 2");
   }
@@ -294,6 +381,9 @@ std::vector<Segment> LineExtractor::extract(const std::vector<PointChain> & chai
       out.push_back(c.segment);
     }
   }
+
+  // 6: close corners between the surviving walls.
+  closeCorners(out, config_.corner_min_angle, config_.corner_max_extension);
   return out;
 }
 

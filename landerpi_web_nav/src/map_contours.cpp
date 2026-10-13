@@ -14,6 +14,7 @@
 
 #include "landerpi_web_nav/map_contours.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -62,6 +63,114 @@ PointChain toWorld(const std::vector<cv::Point> & pixels, const GridView & grid,
         grid.origin_y + (p.y + 0.5) * grid.resolution});
   }
   return chain;
+}
+
+// kFreeSpace: the boundary of the free region the robot is in, split into
+// open chains wherever it stops touching a wall.
+std::vector<PointChain> freeSpaceWallFaces(
+  const GridView & grid, const MapContoursConfig & config, const cv::Mat & walls)
+{
+  cv::Mat free_mask(grid.height, grid.width, CV_8UC1, cv::Scalar(0));
+  for (int r = 0; r < grid.height; ++r) {
+    auto * row = free_mask.ptr<uint8_t>(r);
+    for (int c = 0; c < grid.width; ++c) {
+      const int8_t v = (*grid.data)[static_cast<std::size_t>(r) * grid.width + c];
+      if (v >= 0 && v < config.free_threshold) {
+        row[c] = 255;
+      }
+    }
+  }
+  // Walls win over free (after the closing, a closed gap must stay closed).
+  free_mask.setTo(0, walls);
+
+  // 4-connectivity: two free cells touching only at a corner of a wall do
+  // not leak the region through it.
+  cv::Mat labels;
+  const int count = cv::connectedComponents(free_mask, labels, 4, CV_32S);
+  if (count <= 1) {
+    return {};
+  }
+
+  int target = -1;
+  if (config.seed) {
+    const int sc = static_cast<int>(std::floor((config.seed->x - grid.origin_x) / grid.resolution));
+    const int sr = static_cast<int>(std::floor((config.seed->y - grid.origin_y) / grid.resolution));
+    // The seed (the robot) may sit on a cell that is not free (its own
+    // footprint, noise): take the nearest free cell within 10 cells.
+    double best = 1e9;
+    for (int dr = -10; dr <= 10; ++dr) {
+      for (int dc = -10; dc <= 10; ++dc) {
+        const int r = sr + dr;
+        const int c = sc + dc;
+        if (r < 0 || c < 0 || r >= grid.height || c >= grid.width) {
+          continue;
+        }
+        const int label = labels.at<int>(r, c);
+        const double d = std::hypot(dr, dc);
+        if (label > 0 && d < best) {
+          best = d;
+          target = label;
+        }
+      }
+    }
+  }
+  if (target < 0) {  // no seed (or nothing free near it): largest region
+    std::vector<int> sizes(static_cast<std::size_t>(count), 0);
+    for (int r = 0; r < labels.rows; ++r) {
+      for (int c = 0; c < labels.cols; ++c) {
+        ++sizes[static_cast<std::size_t>(labels.at<int>(r, c))];
+      }
+    }
+    target = static_cast<int>(std::max_element(sizes.begin() + 1, sizes.end()) - sizes.begin());
+  }
+
+  const cv::Mat region = labels == target;
+  // RETR_EXTERNAL: only the outer boundary. Holes inside the region are
+  // objects on the floor, not walls of the room.
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(region, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+  if (contours.empty()) {
+    return {};
+  }
+  const auto & boundary = *std::max_element(
+    contours.begin(), contours.end(), [](const auto & a, const auto & b) {
+      return a.size() < b.size();
+    });
+
+  cv::Mat near_wall = walls.clone();
+  if (config.wall_adjacency_cells > 0) {
+    const int k = 2 * config.wall_adjacency_cells + 1;
+    cv::dilate(near_wall, near_wall, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(k, k)));
+  }
+  auto touches_wall = [&](const cv::Point & p) {return near_wall.at<uint8_t>(p.y, p.x) != 0;};
+
+  // Rotate the closed boundary so it starts right after a non-wall point:
+  // then no wall stretch is split across the wrap-around.
+  const std::size_t n = boundary.size();
+  std::size_t start = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (!touches_wall(boundary[i])) {
+      start = (i + 1) % n;
+      break;
+    }
+  }
+  const bool all_wall = std::all_of(boundary.begin(), boundary.end(), touches_wall);
+
+  std::vector<PointChain> out;
+  std::vector<cv::Point> run;
+  for (std::size_t k = 0; k < n; ++k) {
+    const auto & p = boundary[(start + k) % n];
+    if (touches_wall(p)) {
+      run.push_back(p);
+    } else if (!run.empty()) {
+      out.push_back(toWorld(run, grid, false));
+      run.clear();
+    }
+  }
+  if (!run.empty()) {
+    out.push_back(toWorld(run, grid, all_wall));
+  }
+  return out;
 }
 
 }  // namespace
@@ -204,6 +313,10 @@ std::vector<PointChain> occupiedContours(const GridView & grid, const MapContour
     const int k = 2 * config.close_radius_cells + 1;
     const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(k, k));
     cv::morphologyEx(walls, walls, cv::MORPH_CLOSE, kernel);
+  }
+
+  if (config.method == WallTracing::kFreeSpace) {
+    return freeSpaceWallFaces(grid, config, walls);
   }
 
   std::vector<PointChain> out;

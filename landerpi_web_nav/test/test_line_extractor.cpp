@@ -177,6 +177,48 @@ TEST(LineExtractor, EmptyInputGivesNoSegments)
   EXPECT_TRUE(LineExtractor{LineExtractorConfig{}}.extract({}).empty());
 }
 
+TEST(CloseCorners, ExtendsTwoWallsToTheirCrossing)
+{
+  // Two walls that stop 10 cm short of the corner at (0, 0).
+  std::vector<Segment> segs(2);
+  segs[0].start = {0.1, 0.0};
+  segs[0].end = {2.0, 0.0};
+  segs[1].start = {0.0, 2.0};
+  segs[1].end = {0.0, 0.1};
+  landerpi_web_nav::closeCorners(segs, 0.52, 0.35);
+  EXPECT_NEAR(segs[0].start.x, 0.0, 1e-9);
+  EXPECT_NEAR(segs[0].start.y, 0.0, 1e-9);
+  EXPECT_NEAR(segs[1].end.x, 0.0, 1e-9);
+  EXPECT_NEAR(segs[1].end.y, 0.0, 1e-9);
+  // The far ends do not move.
+  EXPECT_NEAR(segs[0].end.x, 2.0, 1e-9);
+  EXPECT_NEAR(segs[1].start.y, 2.0, 1e-9);
+}
+
+TEST(CloseCorners, LeavesShallowAnglesAndFarCrossingsAlone)
+{
+  // 10 deg apart: not a corner, a slightly bent wall.
+  std::vector<Segment> shallow(2);
+  shallow[0].start = {0.0, 0.0};
+  shallow[0].end = {1.0, 0.0};
+  shallow[1].start = {1.1, 0.0};
+  shallow[1].end = {2.1, std::tan(10.0 * M_PI / 180.0)};
+  const auto before = shallow;
+  landerpi_web_nav::closeCorners(shallow, 0.52, 0.35);
+  EXPECT_DOUBLE_EQ(shallow[0].end.x, before[0].end.x);
+  EXPECT_DOUBLE_EQ(shallow[1].start.x, before[1].start.x);
+
+  // Perpendicular but 1 m away from the crossing: a door or another room.
+  std::vector<Segment> far(2);
+  far[0].start = {1.0, 0.0};
+  far[0].end = {3.0, 0.0};
+  far[1].start = {0.0, 1.0};
+  far[1].end = {0.0, 3.0};
+  landerpi_web_nav::closeCorners(far, 0.52, 0.35);
+  EXPECT_DOUBLE_EQ(far[0].start.x, 1.0);
+  EXPECT_DOUBLE_EQ(far[1].start.y, 1.0);
+}
+
 TEST(LineExtractor, RejectsInvalidConfig)
 {
   LineExtractorConfig bad;
