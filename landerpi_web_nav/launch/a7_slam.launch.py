@@ -29,6 +29,7 @@ def generate_launch_description():
 
     slam_config = LaunchConfiguration('slam_config')
     ekf_config = LaunchConfiguration('ekf_config')
+    stamper_config = LaunchConfiguration('stamper_config')
 
     args = [
         DeclareLaunchArgument(
@@ -36,13 +37,17 @@ def generate_launch_description():
             default_value=os.path.join(pkg_share, 'config', 'slam_toolbox.yaml')),
         DeclareLaunchArgument(
             'ekf_config',
-            default_value=os.path.join(pkg_share, 'config', 'ekf_baseline.yaml')),
+            default_value=os.path.join(pkg_share, 'config', 'ekf_rf2o.yaml')),
+        DeclareLaunchArgument(
+            'stamper_config',
+            default_value=os.path.join(pkg_share, 'config', 'covariance_stamper_zupt.yaml')),
     ]
 
     base = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_share, 'launch', 'a7_base.launch.py')),
-        launch_arguments={'ekf_config': ekf_config}.items(),
+        launch_arguments={'ekf_config': ekf_config,
+                          'stamper_config': stamper_config}.items(),
     )
 
     slam = Node(

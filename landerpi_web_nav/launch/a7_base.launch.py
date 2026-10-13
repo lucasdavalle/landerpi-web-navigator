@@ -49,11 +49,11 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument(
             'ekf_config',
-            default_value=os.path.join(pkg_share, 'config', 'ekf_baseline.yaml'),
-            description='EKF parameters file (baseline or rf2o fusion)'),
+            default_value=os.path.join(pkg_share, 'config', 'ekf_rf2o.yaml'),
+            description='EKF parameters (default: rf2o + IMU, stage 1 winner; ekf_baseline.yaml = stock-like)'),
         DeclareLaunchArgument(
             'stamper_config',
-            default_value=os.path.join(pkg_share, 'config', 'covariance_stamper.yaml'),
+            default_value=os.path.join(pkg_share, 'config', 'covariance_stamper_zupt.yaml'),
             description='covariance_stamper parameters'),
         DeclareLaunchArgument(
             'urdf_path',
