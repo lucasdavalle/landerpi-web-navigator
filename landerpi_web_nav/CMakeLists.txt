@@ -15,6 +15,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Pure logic, no rclcpp dependency: own target so it can be gtest-ed without
 # bringing up rclcpp.
@@ -44,6 +45,19 @@ target_include_directories(map_contours PUBLIC
   ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(map_contours PUBLIC line_extractor ${OpenCV_LIBS})
 target_compile_features(map_contours PUBLIC cxx_std_17)
+
+add_library(ip_filter src/ip_filter.cpp)
+target_include_directories(ip_filter PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(ip_filter PUBLIC cxx_std_17)
+
+add_library(auth_manager src/auth_manager.cpp)
+target_include_directories(auth_manager PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(auth_manager PUBLIC OpenSSL::Crypto)
+target_compile_features(auth_manager PUBLIC cxx_std_17)
 
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
@@ -81,7 +95,7 @@ ament_target_dependencies(wall_vectorizer_node rclcpp)
 
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
-  wall_vectorizer_node_lib
+  wall_vectorizer_node_lib ip_filter auth_manager
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
@@ -94,6 +108,9 @@ install(DIRECTORY include/
 
 install(DIRECTORY launch config rviz
   DESTINATION share/${PROJECT_NAME})
+
+install(PROGRAMS scripts/a7_set_password
+  DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -108,6 +125,12 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_line_extractor test/test_line_extractor.cpp)
   target_link_libraries(test_line_extractor line_extractor)
+
+  ament_add_gtest(test_ip_filter test/test_ip_filter.cpp)
+  target_link_libraries(test_ip_filter ip_filter)
+
+  ament_add_gtest(test_auth_manager test/test_auth_manager.cpp)
+  target_link_libraries(test_auth_manager auth_manager)
 
   ament_add_gtest(test_map_contours test/test_map_contours.cpp)
   target_link_libraries(test_map_contours map_contours)
