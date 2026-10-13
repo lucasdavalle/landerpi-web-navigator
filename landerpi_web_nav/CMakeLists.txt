@@ -16,6 +16,7 @@ find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # Pure logic, no rclcpp dependency: own target so it can be gtest-ed without
 # bringing up rclcpp.
@@ -59,6 +60,19 @@ target_include_directories(auth_manager PUBLIC
 target_link_libraries(auth_manager PUBLIC OpenSSL::Crypto)
 target_compile_features(auth_manager PUBLIC cxx_std_17)
 
+add_library(message_codec src/message_codec.cpp)
+target_include_directories(message_codec PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(message_codec PUBLIC line_extractor nlohmann_json::nlohmann_json)
+target_compile_features(message_codec PUBLIC cxx_std_17)
+
+add_library(scan_projector src/scan_projector.cpp)
+target_include_directories(scan_projector PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(scan_projector PUBLIC cxx_std_17)
+
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -95,7 +109,7 @@ ament_target_dependencies(wall_vectorizer_node rclcpp)
 
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
-  wall_vectorizer_node_lib ip_filter auth_manager
+  wall_vectorizer_node_lib ip_filter auth_manager message_codec scan_projector
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
@@ -131,6 +145,12 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_auth_manager test/test_auth_manager.cpp)
   target_link_libraries(test_auth_manager auth_manager)
+
+  ament_add_gtest(test_message_codec test/test_message_codec.cpp)
+  target_link_libraries(test_message_codec message_codec)
+
+  ament_add_gtest(test_scan_projector test/test_scan_projector.cpp)
+  target_link_libraries(test_scan_projector scan_projector)
 
   ament_add_gtest(test_map_contours test/test_map_contours.cpp)
   target_link_libraries(test_map_contours map_contours)

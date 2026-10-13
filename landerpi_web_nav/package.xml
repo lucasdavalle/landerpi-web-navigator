@@ -23,6 +23,7 @@
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>libssl-dev</depend>
+  <depend>nlohmann-json-dev</depend>
 
   <!-- Stock Hiwonder packages used at runtime only (landerpi_description,
        rf2o_laser_odometry, imu_calib, calibration) are deliberately not
