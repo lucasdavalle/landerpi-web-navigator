@@ -50,7 +50,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'ekf_config',
             default_value=os.path.join(pkg_share, 'config', 'ekf_rf2o.yaml'),
-            description='EKF parameters (default: rf2o + IMU, stage 1 winner; ekf_baseline.yaml = stock-like)'),
+            description='EKF parameters (stage 1 winner; ekf_baseline.yaml = stock-like)'),
         DeclareLaunchArgument(
             'stamper_config',
             default_value=os.path.join(pkg_share, 'config', 'covariance_stamper_zupt.yaml'),

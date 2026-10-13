@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <opencv2/core.hpp>
+
 #include "landerpi_web_nav/line_extractor.hpp"
 
 namespace landerpi_web_nav
@@ -35,8 +37,19 @@ struct GridView
   const std::vector<int8_t> * data = nullptr;
 };
 
+enum class WallTracing
+{
+  // findContours: follows the boundary of each wall blob. A wall several
+  // cells thick yields one line per face.
+  kContours,
+  // Zhang-Suen thinning to a 1-cell-wide skeleton, then traced into
+  // polylines: one line along the middle of each wall, however thick.
+  kSkeleton,
+};
+
 struct MapContoursConfig
 {
+  WallTracing method = WallTracing::kSkeleton;
   // Cells at or above this occupancy count as walls (map_saver uses 65).
   int occupied_threshold = 65;
   // Morphological closing radius in cells: joins walls broken by a missing
@@ -44,9 +57,19 @@ struct MapContoursConfig
   int close_radius_cells = 1;
 };
 
-// Occupied cells -> ordered, closed contours in world coordinates (cell
-// centers), via OpenCV's findContours. Throws std::invalid_argument on an
-// inconsistent grid (size mismatch, non-positive resolution).
+// Occupied cells -> ordered point chains in world coordinates (cell
+// centers), by the configured method. kContours gives closed chains,
+// kSkeleton open ones (closed for rings with no ends). Throws
+// std::invalid_argument on an inconsistent grid (size mismatch,
+// non-positive resolution).
 std::vector<PointChain> occupiedContours(const GridView & grid, const MapContoursConfig & config);
+
+// Zhang-Suen thinning of a binary image (non-zero = foreground), in place.
+// Exposed for tests. Pixels on the image border are treated as background.
+void thinZhangSuen(cv::Mat & binary);
+
+// Splits a 1-pixel-wide skeleton into polylines (pixel coordinates),
+// breaking at ends and junctions. Exposed for tests.
+std::vector<std::vector<cv::Point>> traceSkeleton(const cv::Mat & skeleton);
 
 }  // namespace landerpi_web_nav

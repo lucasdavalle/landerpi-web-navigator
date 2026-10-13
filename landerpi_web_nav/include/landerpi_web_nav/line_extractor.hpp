@@ -49,18 +49,18 @@ struct LineExtractorConfig
   double max_gap = 0.15;  // m
   // Split: a chain is cut at its point farthest from the chord between its
   // ends while that distance exceeds this.
-  double split_distance = 0.05;  // m
+  double split_distance = 0.08;  // m
   // Merge: two segments become one when their directions differ by less
   // than merge_angle, each one's ends lie within merge_distance of the
   // other's line, and the gap between them along the line is below
   // merge_gap. It is global (any pair, not only neighbours) so the two
   // parallel contours of a thick wall collapse into one line.
-  double merge_angle = 0.087;     // rad (~5 deg)
-  double merge_distance = 0.08;   // m
+  double merge_angle = 0.14;      // rad (~8 deg)
+  double merge_distance = 0.12;   // m
   double merge_gap = 0.25;        // m
-  // Output filter: drops clutter (chair legs, noise).
+  // Output filter: drops clutter (chair legs, objects against a wall).
   std::size_t min_points = 5;
-  double min_length = 0.20;  // m
+  double min_length = 0.30;  // m
 };
 
 // Split-and-merge line extraction (map contours -> wall segments). Pure: no

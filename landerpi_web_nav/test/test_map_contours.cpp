@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -33,7 +34,10 @@ using landerpi_web_nav::LineExtractor;
 using landerpi_web_nav::LineExtractorConfig;
 using landerpi_web_nav::MapContoursConfig;
 using landerpi_web_nav::Segment;
+using landerpi_web_nav::WallTracing;
 using landerpi_web_nav::occupiedContours;
+using landerpi_web_nav::thinZhangSuen;
+using landerpi_web_nav::traceSkeleton;
 
 namespace
 {
@@ -45,6 +49,13 @@ double angleDeg(const Segment & s)
     a += 180.0;
   }
   return a >= 180.0 ? a - 180.0 : a;
+}
+
+MapContoursConfig contoursMethod()
+{
+  MapContoursConfig c;
+  c.method = WallTracing::kContours;
+  return c;
 }
 
 // map_saver "trinary" PGM -> OccupancyGrid data: black (0) = 100,
@@ -82,13 +93,82 @@ TEST(MapContours, SyntheticRoomGivesFourWalls)
     data[i * n + (n - 1)] = 100;    // right column
   }
   const GridView grid{n, n, 0.05, -1.0, -1.0, &data};
-  const auto contours = occupiedContours(grid, MapContoursConfig{});
-  ASSERT_FALSE(contours.empty());
-  const auto segs = LineExtractor{LineExtractorConfig{}}.extract(contours);
-  ASSERT_EQ(segs.size(), 4u);
-  for (const auto & s : segs) {
-    EXPECT_NEAR(s.length(), 1.95, 0.1);  // cell centers: (n - 1) * 0.05
+  for (const auto & cfg : {MapContoursConfig{}, contoursMethod()}) {
+    const auto contours = occupiedContours(grid, cfg);
+    ASSERT_FALSE(contours.empty());
+    const auto segs = LineExtractor{LineExtractorConfig{}}.extract(contours);
+    ASSERT_EQ(segs.size(), 4u);
+    for (const auto & s : segs) {
+      EXPECT_NEAR(s.length(), 1.95, 0.1);  // cell centers: (n - 1) * 0.05
+    }
   }
+}
+
+TEST(ZhangSuen, ThinsAThickBarToOnePixel)
+{
+  cv::Mat img(20, 40, CV_8UC1, cv::Scalar(0));
+  img(cv::Rect(5, 6, 30, 5)).setTo(255);  // 5 px thick, rows 6..10
+  thinZhangSuen(img);
+  // Every column inside the bar (away from its ends) keeps exactly 1 pixel,
+  // in the middle rows.
+  for (int c = 10; c < 30; ++c) {
+    int count = 0;
+    int row = -1;
+    for (int r = 0; r < img.rows; ++r) {
+      if (img.at<uint8_t>(r, c)) {
+        ++count;
+        row = r;
+      }
+    }
+    EXPECT_EQ(count, 1) << "column " << c;
+    EXPECT_NEAR(row, 8, 1) << "column " << c;
+  }
+}
+
+TEST(ZhangSuen, KeepsAOnePixelLineIntact)
+{
+  cv::Mat img(10, 30, CV_8UC1, cv::Scalar(0));
+  img(cv::Rect(2, 4, 25, 1)).setTo(255);
+  const cv::Mat before = img.clone();
+  thinZhangSuen(img);
+  EXPECT_EQ(cv::countNonZero(img != before), 0);
+}
+
+TEST(TraceSkeleton, SplitsATeeIntoThreeBranches)
+{
+  cv::Mat img(30, 30, CV_8UC1, cv::Scalar(0));
+  img(cv::Rect(2, 10, 26, 1)).setTo(255);   // horizontal bar
+  img(cv::Rect(15, 11, 1, 15)).setTo(255);  // stem going down from it
+  const auto paths = traceSkeleton(img);
+  int long_paths = 0;
+  for (const auto & p : paths) {
+    long_paths += p.size() >= 10;
+  }
+  EXPECT_EQ(long_paths, 3);
+}
+
+TEST(MapContours, ThickWallGivesOneCentredLine)
+{
+  // A 4-cell-thick wall (rows 8..11): contours see two faces 15 cm apart,
+  // the skeleton sees one line through the middle.
+  const int w = 60;
+  const int h = 20;
+  std::vector<int8_t> data(w * h, 0);
+  for (int r = 8; r < 12; ++r) {
+    for (int c = 5; c < 55; ++c) {
+      data[r * w + c] = 100;
+    }
+  }
+  const GridView grid{w, h, 0.05, 0.0, 0.0, &data};
+  const LineExtractor extractor{LineExtractorConfig{}};
+
+  const auto skel = extractor.extract(occupiedContours(grid, MapContoursConfig{}));
+  ASSERT_EQ(skel.size(), 1u);
+  EXPECT_NEAR(skel[0].start.y, 10.0 * 0.05, 0.05);  // centre of rows 8..11
+  EXPECT_NEAR(skel[0].length(), 2.4, 0.2);
+
+  const auto faces = extractor.extract(occupiedContours(grid, contoursMethod()));
+  EXPECT_EQ(faces.size(), 2u);  // the defect the skeleton fixes
 }
 
 TEST(MapContours, CellCentersMapToWorldCoordinates)
@@ -135,8 +215,11 @@ TEST(MapContours, RealRoomFromStageZero)
   int h = 0;
   const auto data = loadTrinaryPgm(std::string(TEST_DATA_DIR) + "/stage0_room.pgm", w, h);
   const GridView grid{w, h, 0.05, -3.62, -4.34, &data};
-  const auto segs = LineExtractor{LineExtractorConfig{}}.extract(
-    occupiedContours(grid, MapContoursConfig{}));
+  const LineExtractor extractor{LineExtractorConfig{}};
+  const auto segs = extractor.extract(occupiedContours(grid, MapContoursConfig{}));
+  const auto face_segs = extractor.extract(occupiedContours(grid, contoursMethod()));
+  // The skeleton never gives more segments than tracing both faces.
+  EXPECT_LE(segs.size(), face_segs.size());
 
   std::vector<Segment> walls;
   for (const auto & s : segs) {
@@ -161,16 +244,28 @@ TEST(MapContours, RealRoomFromStageZero)
   // Optional visual check: A7_DEBUG_DIR=/some/dir writes the map with the
   // segments drawn on it (not part of the pass/fail criteria).
   if (const char * dir = std::getenv("A7_DEBUG_DIR")) {
-    cv::Mat img = cv::imread(std::string(TEST_DATA_DIR) + "/stage0_room.pgm", cv::IMREAD_COLOR);
-    cv::resize(img, img, cv::Size(), 4, 4, cv::INTER_NEAREST);
-    auto px = [&](const landerpi_web_nav::Point2 & p) {
-        return cv::Point(
-          static_cast<int>((p.x + 3.62) / 0.05 * 4),
-          static_cast<int>((h - (p.y + 4.34) / 0.05) * 4));
+    auto draw = [&](const std::vector<Segment> & ss, const std::string & name) {
+        cv::Mat img = cv::imread(
+          std::string(TEST_DATA_DIR) + "/stage0_room.pgm", cv::IMREAD_COLOR);
+        cv::resize(img, img, cv::Size(), 4, 4, cv::INTER_NEAREST);
+        auto px = [&](const landerpi_web_nav::Point2 & p) {
+            return cv::Point(
+              static_cast<int>((p.x + 3.62) / 0.05 * 4),
+              static_cast<int>((h - (p.y + 4.34) / 0.05) * 4));
+          };
+        for (const auto & s : ss) {
+          cv::line(img, px(s.start), px(s.end), cv::Scalar(0, 0, 255), 2);
+        }
+        cv::imwrite(std::string(dir) + "/" + name, img);
       };
     for (const auto & s : segs) {
-      cv::line(img, px(s.start), px(s.end), cv::Scalar(0, 0, 255), 2);
+      if (s.length() > 0.8) {
+        std::printf(
+          "[debug] segment %.2f m at %.1f deg, from (%.2f, %.2f) to (%.2f, %.2f)\n",
+          s.length(), angleDeg(s), s.start.x, s.start.y, s.end.x, s.end.y);
+      }
     }
-    cv::imwrite(std::string(dir) + "/stage0_room_segments.png", img);
+    draw(segs, "stage0_room_skeleton.png");
+    draw(face_segs, "stage0_room_contours.png");
   }
 }
