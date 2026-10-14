@@ -11,6 +11,11 @@
 #   velocity_gate is the only door to the wheels.
 # - Small room: inflation 0.25 m instead of 0.55, short rolling window.
 # - Speeds under velocity_gate's limits (0.25 m/s, 1.0 rad/s).
+# - Collision Monitor (after the stage 5 incident, the robot pushed a
+#   person): "approach" mode simulates the footprint moving with the current
+#   command and slows/stops only motion that would hit something within
+#   time_before_collision. Turning in place never collides, so turning away
+#   always passes (user: "que no frene sino que gire").
 # - Footprint: the real chassis, 22 x 18 cm (measured, arm folded), centred
 #   on base_footprint, plus 1 cm padding per side.
 
@@ -21,7 +26,9 @@ bt_navigator:
     robot_base_frame: base_footprint
     odom_topic: /odom
     bt_loop_duration: 10
-    default_server_timeout: 20
+    # 20 ms in the defaults: too short on the loaded Pi, replanning requests
+    # were silently dropped (stage 5 incident).
+    default_server_timeout: 200
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
@@ -184,7 +191,7 @@ global_costmap:
   global_costmap:
     ros__parameters:
       use_sim_time: false
-      update_frequency: 1.0
+      update_frequency: 2.0
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_footprint
@@ -263,3 +270,28 @@ velocity_smoother:
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
+
+collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "/a7/nav/cmd_vel_checked"   # smoother + behaviours
+    cmd_vel_out_topic: "/a7/cmd_vel_nav"          # -> velocity_gate
+    transform_tolerance: 0.5
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/local_costmap/published_footprint"
+      time_before_collision: 1.2      # s of free motion required
+      simulation_time_step: 0.1
+      max_points: 2                   # 3+ laser points in the way trigger it
+      visualize: false
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
