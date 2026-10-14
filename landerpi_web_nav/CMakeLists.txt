@@ -17,6 +17,11 @@ find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(Boost REQUIRED)
+find_package(Threads REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # Pure logic, no rclcpp dependency: own target so it can be gtest-ed without
 # bringing up rclcpp.
@@ -73,6 +78,15 @@ target_include_directories(scan_projector PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_compile_features(scan_projector PUBLIC cxx_std_17)
 
+# Network only (Boost.Beast), no ROS: the gateway node plugs its logic in.
+add_library(web_server src/web_server.cpp)
+target_include_directories(web_server PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_include_directories(web_server SYSTEM PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(web_server PUBLIC Threads::Threads nlohmann_json::nlohmann_json)
+target_compile_features(web_server PUBLIC cxx_std_17)
+
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -107,14 +121,30 @@ add_executable(wall_vectorizer_node src/wall_vectorizer_node_main.cpp)
 target_link_libraries(wall_vectorizer_node wall_vectorizer_node_lib)
 ament_target_dependencies(wall_vectorizer_node rclcpp)
 
+add_library(web_gateway_node_lib src/web_gateway_node.cpp)
+target_include_directories(web_gateway_node_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(web_gateway_node_lib
+  web_server auth_manager ip_filter message_codec scan_projector)
+ament_target_dependencies(web_gateway_node_lib
+  rclcpp rclcpp_lifecycle lifecycle_msgs nav_msgs sensor_msgs geometry_msgs std_msgs
+  std_srvs tf2 tf2_ros visualization_msgs)
+
+add_executable(web_gateway_node src/web_gateway_node_main.cpp)
+target_link_libraries(web_gateway_node web_gateway_node_lib)
+ament_target_dependencies(web_gateway_node rclcpp lifecycle_msgs)
+
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
   wall_vectorizer_node_lib ip_filter auth_manager message_codec scan_projector
+  web_server web_gateway_node_lib
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 
 install(TARGETS covariance_stamper_node scan_recenter_node wall_vectorizer_node
+  web_gateway_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
