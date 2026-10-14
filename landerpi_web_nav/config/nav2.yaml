@@ -2,8 +2,11 @@
 # Differences, and why:
 # - Runs on the LIVE SLAM map: no AMCL/map_server (slam_toolbox provides
 #   /map and map -> odom), frames base_footprint / odom / map.
-# - DWB configured holonomic (vy) for the mecanum chassis; the stock config
-#   is differential (max_vel_y 0).
+# - Motion style (user decision after the first tests, 2026-10-15): strafing
+#   slips on this floor, so NO sideways motion. RotationShimController turns
+#   in place towards the path first, then DWB (differential: vx + wz only)
+#   drives forward. Obstacles: the planner replans around them (1 Hz) and
+#   DWB picks trajectories that keep clear.
 # - Every velocity output goes to /a7/cmd_vel_nav (see a7_nav.launch.py):
 #   velocity_gate is the only door to the wheels.
 # - Small room: inflation 0.25 m instead of 0.55, short rolling window.
@@ -81,7 +84,7 @@ controller_server:
     use_sim_time: false
     controller_frequency: 10.0          # 20 in the defaults; the Pi also runs SLAM
     min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.001     # holonomic: vy matters (defaults use 0.5)
+    min_y_velocity_threshold: 0.5       # no sideways motion (as Nav2's defaults)
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
@@ -99,25 +102,33 @@ controller_server:
       # A click on the map is a position, not a heading: any final yaw is fine.
       yaw_goal_tolerance: 3.15
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
+      # Turn in place towards the path, then hand over to DWB.
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.5       # rad (~30 deg): rotate first above this
+      forward_sampling_distance: 0.4    # m along the path to measure its heading
+      rotate_to_heading_angular_vel: 0.7
+      max_angular_accel: 2.0
+      simulate_ahead_time: 1.0          # collision check while rotating
+      # DWB (primary), differential: forward + turn, no strafing.
       debug_trajectory_details: false
-      min_vel_x: -0.10
-      min_vel_y: -0.18
+      min_vel_x: 0.0                    # forward only (backing up is a recovery)
+      min_vel_y: 0.0
       max_vel_x: 0.22
-      max_vel_y: 0.18
+      max_vel_y: 0.0
       max_vel_theta: 0.9
       min_speed_xy: 0.0
       max_speed_xy: 0.22
       min_speed_theta: 0.0
       acc_lim_x: 1.0
-      acc_lim_y: 1.0
+      acc_lim_y: 0.0
       acc_lim_theta: 2.0
       decel_lim_x: -1.0
-      decel_lim_y: -1.0
+      decel_lim_y: 0.0
       decel_lim_theta: -2.0
-      vx_samples: 12
-      vy_samples: 9
-      vtheta_samples: 15
+      vx_samples: 15
+      vy_samples: 1
+      vtheta_samples: 20
       sim_time: 1.5
       linear_granularity: 0.05
       angular_granularity: 0.025
@@ -126,7 +137,7 @@ controller_server:
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: true
       stateful: true
-      critics: ["Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "Twirling"]
+      critics: ["Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       BaseObstacle.scale: 0.02
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
@@ -134,8 +145,6 @@ controller_server:
       GoalAlign.forward_point_distance: 0.1
       PathDist.scale: 32.0
       GoalDist.scale: 24.0
-      # Holonomic: discourage needless spinning while translating sideways.
-      Twirling.scale: 5.0
 
 local_costmap:
   local_costmap:
@@ -246,10 +255,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.22, 0.18, 0.9]
-    min_velocity: [-0.10, -0.18, -0.9]
-    max_accel: [1.0, 1.0, 2.0]
-    max_decel: [-1.0, -1.0, -2.0]
+    max_velocity: [0.22, 0.0, 0.9]      # no sideways motion
+    min_velocity: [-0.10, 0.0, -0.9]    # small reverse only for the back-up recovery
+    max_accel: [1.0, 0.0, 2.0]
+    max_decel: [-1.0, 0.0, -2.0]
     odom_topic: "/odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
