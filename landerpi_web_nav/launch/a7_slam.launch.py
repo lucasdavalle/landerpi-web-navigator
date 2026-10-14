@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""a7_base (TF + odometry) + slam_toolbox (async) + wall_vectorizer + web_gateway."""
+"""A7: TF + odometry, slam_toolbox, wall_vectorizer, web_gateway, velocity_gate."""
 
 import os
 
@@ -74,4 +74,13 @@ def generate_launch_description():
         parameters=[os.path.join(pkg_share, 'config', 'web_gateway.yaml')],
     )
 
-    return LaunchDescription(args + [base, slam, walls, gateway])
+    # The only door to the wheels (stage 4): idle until enabled from the web,
+    # stops on its own when the browser's heartbeats stop.
+    gate = Node(
+        package='landerpi_web_nav',
+        executable='velocity_gate_node',
+        name='velocity_gate',
+        parameters=[os.path.join(pkg_share, 'config', 'velocity_gate.yaml')],
+    )
+
+    return LaunchDescription(args + [base, slam, walls, gateway, gate])

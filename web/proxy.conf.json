@@ -1,0 +1,11 @@
+{
+  "/api": {
+    "target": "http://192.168.100.181:8000",
+    "secure": false
+  },
+  "/ws": {
+    "target": "ws://192.168.100.181:8000",
+    "ws": true,
+    "secure": false
+  }
+}
