@@ -7,7 +7,8 @@ web_gateway:
     # Home only: anything else gets 403 before the password is looked at.
     allowed_networks: ["192.168.100.0/24", "192.168.149.0/24", "127.0.0.1"]
     password_file: ~/.a7/password   # written by a7_set_password (hash only)
-    static_root: ""           # built web app directory (stage 4)
+    # Built web app, copied from the PC to /home/pi/docker/tmp/a7_web on the host.
+    static_root: /home/ubuntu/shared/a7_web
     token_ttl_s: 43200        # 12 h
     max_login_failures: 5     # per IP, per minute
     pose_rate_hz: 10.0
