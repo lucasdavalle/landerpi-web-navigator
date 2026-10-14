@@ -1,0 +1,13 @@
+# The only door to the wheels (stage 4). Same names as declare_parameter in
+# velocity_gate_node.cpp. Hard ceilings in code: 0.5 m/s, 2.0 rad/s.
+velocity_gate:
+  ros__parameters:
+    max_vx: 0.25              # m/s
+    max_vy: 0.25              # m/s (mecanum sideways)
+    max_wz: 1.0               # rad/s
+    max_linear_accel: 0.5     # m/s^2 (stopping is never ramped)
+    max_angular_accel: 2.0    # rad/s^2
+    heartbeat_timeout: 0.5    # s without /a7/heartbeat -> zero (deadman)
+    command_timeout: 0.3      # s: older commands count as "stop"
+    rate_hz: 20.0
+    output_topic: /controller/cmd_vel

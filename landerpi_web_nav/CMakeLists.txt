@@ -87,6 +87,12 @@ target_include_directories(web_server SYSTEM PRIVATE ${Boost_INCLUDE_DIRS})
 target_link_libraries(web_server PUBLIC Threads::Threads nlohmann_json::nlohmann_json)
 target_compile_features(web_server PUBLIC cxx_std_17)
 
+add_library(velocity_gate src/velocity_gate.cpp)
+target_include_directories(velocity_gate PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(velocity_gate PUBLIC cxx_std_17)
+
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -135,16 +141,28 @@ add_executable(web_gateway_node src/web_gateway_node_main.cpp)
 target_link_libraries(web_gateway_node web_gateway_node_lib)
 ament_target_dependencies(web_gateway_node rclcpp lifecycle_msgs)
 
+add_library(velocity_gate_node_lib src/velocity_gate_node.cpp)
+target_include_directories(velocity_gate_node_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(velocity_gate_node_lib velocity_gate)
+ament_target_dependencies(velocity_gate_node_lib
+  rclcpp rclcpp_lifecycle lifecycle_msgs geometry_msgs std_msgs std_srvs)
+
+add_executable(velocity_gate_node src/velocity_gate_node_main.cpp)
+target_link_libraries(velocity_gate_node velocity_gate_node_lib)
+ament_target_dependencies(velocity_gate_node rclcpp lifecycle_msgs)
+
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
   wall_vectorizer_node_lib ip_filter auth_manager message_codec scan_projector
-  web_server web_gateway_node_lib
+  web_server web_gateway_node_lib velocity_gate velocity_gate_node_lib
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 
 install(TARGETS covariance_stamper_node scan_recenter_node wall_vectorizer_node
-  web_gateway_node
+  web_gateway_node velocity_gate_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
@@ -184,6 +202,9 @@ if(BUILD_TESTING)
 
   find_package(launch_testing_ament_cmake REQUIRED)
   add_launch_test(test/test_gateway_launch.py TIMEOUT 90)
+
+  ament_add_gtest(test_velocity_gate test/test_velocity_gate.cpp)
+  target_link_libraries(test_velocity_gate velocity_gate)
 
   ament_add_gtest(test_map_contours test/test_map_contours.cpp)
   target_link_libraries(test_map_contours map_contours)
