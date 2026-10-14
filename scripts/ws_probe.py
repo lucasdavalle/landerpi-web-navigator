@@ -29,6 +29,7 @@ import json
 import struct
 import sys
 import time
+import urllib.error
 import urllib.request
 
 import websocket  # websocket-client
@@ -66,7 +67,12 @@ def main():
 
     token = a.token
     if not token and not a.no_auth:
-        token = login(a.host, a.port, a.password or getpass.getpass('Contraseña: '))
+        try:
+            token = login(a.host, a.port, a.password or getpass.getpass('Contraseña: '))
+        except urllib.error.HTTPError as e:
+            print(f'login rechazado: HTTP {e.code} {json.loads(e.read() or b"{}").get("error")}')
+            return 1
+        print('login OK')
 
     ws = websocket.create_connection(f'ws://{a.host}:{a.port}/ws', timeout=5)
     if not a.no_auth:
