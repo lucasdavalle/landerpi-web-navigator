@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""a7_base (TF + odometry) + slam_toolbox mapping (async) + wall_vectorizer."""
+"""a7_base (TF + odometry) + slam_toolbox (async) + wall_vectorizer + web_gateway."""
 
 import os
 
@@ -65,4 +65,13 @@ def generate_launch_description():
         parameters=[os.path.join(pkg_share, 'config', 'wall_vectorizer.yaml')],
     )
 
-    return LaunchDescription(args + [base, slam, walls])
+    # Read-only web gateway (stage 3). Needs ~/.a7/password (a7_set_password);
+    # without it the node logs the reason and exits, the rest keeps running.
+    gateway = Node(
+        package='landerpi_web_nav',
+        executable='web_gateway_node',
+        name='web_gateway',
+        parameters=[os.path.join(pkg_share, 'config', 'web_gateway.yaml')],
+    )
+
+    return LaunchDescription(args + [base, slam, walls, gateway])

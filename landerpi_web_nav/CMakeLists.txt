@@ -182,6 +182,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_scan_projector test/test_scan_projector.cpp)
   target_link_libraries(test_scan_projector scan_projector)
 
+  find_package(launch_testing_ament_cmake REQUIRED)
+  add_launch_test(test/test_gateway_launch.py TIMEOUT 90)
+
   ament_add_gtest(test_map_contours test/test_map_contours.cpp)
   target_link_libraries(test_map_contours map_contours)
   target_compile_definitions(test_map_contours PRIVATE
