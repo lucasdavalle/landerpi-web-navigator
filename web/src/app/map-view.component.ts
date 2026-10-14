@@ -4,12 +4,13 @@ import {
 
 import { GridMap } from './protocol';
 import { RobotSocket } from './robot-socket.service';
+import { TeleopService } from './teleop.service';
 
 /**
  * The live map on a canvas: occupancy grid, walls, laser points, robot and
  * its uncertainty ellipse. Wheel = zoom, drag = pan, "Seguir" keeps the
- * robot centred. A click shows the clicked map coordinates; sending the
- * robot there is stage 5 (Nav2), prepared but disabled.
+ * robot centred. A click picks a map point; the driver can send the robot
+ * there ("Ir acá", Nav2). The goal and the planned path are drawn.
  */
 @Component({
   selector: 'a7-map-view',
@@ -26,7 +27,10 @@ import { RobotSocket } from './robot-socket.service';
     @if (clicked(); as c) {
       <div class="goal">
         Punto ({{ c.x.toFixed(2) }}, {{ c.y.toFixed(2) }}) m
-        <button disabled title="Navegación autónoma: etapa 5">Ir acá</button>
+        <button (click)="goHere(c.x, c.y)" [disabled]="!teleop.isDriver()"
+                [title]="teleop.isDriver() ? 'Navegar hasta este punto' : 'Primero habilitá el movimiento'">
+          Ir acá
+        </button>
         <button (click)="clicked.set(null)">×</button>
       </div>
     }
@@ -45,6 +49,7 @@ export class MapViewComponent implements AfterViewInit, OnDestroy {
   @ViewChild('canvas', { static: true }) canvasRef!: ElementRef<HTMLCanvasElement>;
 
   private readonly socket = inject(RobotSocket);
+  readonly teleop = inject(TeleopService);
   readonly follow = signal(true);
   readonly clicked = signal<{ x: number; y: number } | null>(null);
 
@@ -87,6 +92,11 @@ export class MapViewComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     cancelAnimationFrame(this.frame);
     this.resizeObs?.disconnect();
+  }
+
+  goHere(x: number, y: number): void {
+    this.socket.send({ type: 'goal', x, y });
+    this.clicked.set(null);
   }
 
   fit(): void {
@@ -221,6 +231,32 @@ export class MapViewComponent implements AfterViewInit, OnDestroy {
         const [px, py] = this.toScreen(scan.points[i], scan.points[i + 1]);
         ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
       }
+    }
+
+    // Planned path and goal (stage 5).
+    const path = this.socket.path();
+    if (path.length > 1) {
+      ctx.strokeStyle = '#ffb300';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      path.forEach(([x, y], i) => {
+        const [sx, sy] = this.toScreen(x, y);
+        if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    const nav = this.socket.nav();
+    if (nav.goal && (nav.state === 'pending' || nav.state === 'active')) {
+      const [gx, gy] = this.toScreen(nav.goal[0], nav.goal[1]);
+      ctx.strokeStyle = '#ffb300';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(gx, gy, 8, 0, 2 * Math.PI);
+      ctx.moveTo(gx - 12, gy); ctx.lineTo(gx + 12, gy);
+      ctx.moveTo(gx, gy - 12); ctx.lineTo(gx, gy + 12);
+      ctx.stroke();
     }
 
     if (pose) this.drawRobot(ctx, pose.x, pose.y, pose.yaw, pose.cov);

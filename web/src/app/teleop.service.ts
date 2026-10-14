@@ -16,9 +16,11 @@ const KEYS: Record<string, Command> = {
 /**
  * Keyboard driving. While this browser is the driver it sends a heartbeat
  * every 200 ms (the deadman in velocity_gate trips after 500 ms without
- * one) and the teleop command every 100 ms. Losing the keyboard (window
- * blur, tab hidden) releases every key, so the robot never keeps going
- * with nobody pressing.
+ * one). Teleop goes out every 100 ms ONLY while a key is held, plus one
+ * zero on release: a constant stream of zeros would keep velocity_gate on
+ * "teleop" and block Nav2 forever. Any key also cancels a navigation goal
+ * (gateway side). Losing the keyboard (window blur, tab hidden) releases
+ * every key, so the robot never keeps going with nobody pressing.
  */
 @Injectable({ providedIn: 'root' })
 export class TeleopService {
@@ -26,6 +28,7 @@ export class TeleopService {
   private readonly pressed = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private tick = 0;
+  private wasMoving = false;
 
   /** Fraction (0.2 .. 1) of the velocity_gate limits. */
   readonly speed = signal(0.5);
@@ -95,7 +98,12 @@ export class TeleopService {
     this.timer = setInterval(() => {
       if (!this.isDriver()) return;
       if (this.tick++ % 2 === 0) this.socket.send({ type: 'heartbeat' });
-      this.socket.send({ type: 'teleop', ...this.command() });
+      const c = this.command();
+      const moving = c.vx !== 0 || c.vy !== 0 || c.wz !== 0;
+      if (moving || this.wasMoving) {
+        this.socket.send({ type: 'teleop', ...c });  // the last one is the zero
+      }
+      this.wasMoving = moving;
     }, 100);
   }
 

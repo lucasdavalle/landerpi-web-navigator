@@ -1,7 +1,9 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
 
 import { AuthService } from './auth.service';
-import { DriveState, GridMap, Pose, Scan, Status, Wall, decodeBinary } from './protocol';
+import {
+  DriveState, GridMap, NavState, PathPoints, Pose, Scan, Status, Wall, decodeBinary,
+} from './protocol';
 
 export type Link = 'disconnected' | 'connecting' | 'connected';
 
@@ -25,6 +27,10 @@ export class RobotSocket {
   readonly pose = signal<Pose | null>(null);
   readonly status = signal<Status | null>(null);
   readonly drive = signal<DriveState>({ driver: null, gate: 'unknown' });
+  readonly nav = signal<NavState>({
+    state: 'idle', goal: null, distance: null, eta: null, recoveries: 0,
+  });
+  readonly path = signal<PathPoints>([]);
 
   constructor() {
     // Connect while there is a token; close when it goes away.
@@ -119,6 +125,15 @@ export class RobotSocket {
         break;
       case 'drive':
         this.drive.set({ driver: msg.driver, gate: msg.gate });
+        break;
+      case 'nav':
+        this.nav.set(msg as NavState);
+        if (msg.state !== 'pending' && msg.state !== 'active') this.path.set([]);
+        break;
+      case 'path':
+        if (this.nav().state === 'pending' || this.nav().state === 'active') {
+          this.path.set(msg.points as PathPoints);
+        }
         break;
     }
   }

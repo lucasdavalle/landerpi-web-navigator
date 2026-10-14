@@ -14,6 +14,7 @@
 
 #include "landerpi_web_nav/web_gateway_node.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -185,6 +186,11 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
         server_->broadcast(WsFrame{false, driveStateJson(), {}});
       }
     });
+  // Navigation (stage 5): Nav2's standard action, and the planned path.
+  nav_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
+  plan_sub_ = create_subscription<nav_msgs::msg::Path>(
+    "/plan", rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
+    [this](nav_msgs::msg::Path::SharedPtr m) {onPlan(std::move(m));});
   battery_sub_ = create_subscription<std_msgs::msg::UInt16>(
     "/ros_robot_controller/battery", rclcpp::QoS(rclcpp::KeepLast(5)).reliable(),
     [this](std_msgs::msg::UInt16::SharedPtr m) {
@@ -231,6 +237,7 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_deactivate(const rclcpp_lifecy
     }
   }
   applyDriveAction(action);
+  cancelGoal("gateway deactivated");
   pose_timer_.reset();
   scan_timer_.reset();
   status_timer_.reset();
@@ -268,6 +275,8 @@ void WebGatewayNode::releaseAll()
   odom_sub_.reset();
   battery_sub_.reset();
   gate_status_sub_.reset();
+  plan_sub_.reset();
+  nav_client_.reset();
   teleop_pub_.reset();
   heartbeat_pub_.reset();
   set_running_client_.reset();
@@ -510,6 +519,9 @@ void WebGatewayNode::handleWsMessage(WsClientId client, const nlohmann::json & m
         msg.value("enable", false) ? "is now" : "stopped");
     }
     applyDriveAction(d.action);
+    if (d.action == DriveArbiter::Action::kDisable) {
+      cancelGoal("driver handed back control");
+    }
     server_->broadcast(WsFrame{false, driveStateJson(), {}});
     return;
   }
@@ -531,7 +543,180 @@ void WebGatewayNode::handleWsMessage(WsClientId client, const nlohmann::json & m
     t.linear.x = msg.value("vx", 0.0);
     t.linear.y = msg.value("vy", 0.0);
     t.angular.z = msg.value("wz", 0.0);
+    // Taking the wheel by hand ends autonomous navigation (user decision):
+    // it must not resume on its own when the key is released.
+    if (std::abs(t.linear.x) + std::abs(t.linear.y) + std::abs(t.angular.z) > 1e-3) {
+      cancelGoal("manual teleop");
+    }
     teleop_pub_->publish(t);
+  } else if (type == "goal") {
+    const double x = msg.at("x").get<double>();
+    const double y = msg.at("y").get<double>();
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+      return;
+    }
+    sendGoal(x, y);
+  } else if (type == "cancel") {
+    cancelGoal("cancel from the browser");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Navigation (stage 5).
+// ---------------------------------------------------------------------------
+std::string WebGatewayNode::navJsonLocked() const
+{
+  return json{
+    {"type", "nav"},
+    {"state", nav_.state},
+    {"goal", nav_.goal ? json({(*nav_.goal)[0], (*nav_.goal)[1]}) : json(nullptr)},
+    {"distance", nav_.distance ? json(*nav_.distance) : json(nullptr)},
+    {"eta", nav_.eta ? json(*nav_.eta) : json(nullptr)},
+    {"recoveries", nav_.recoveries},
+  }.dump();
+}
+
+std::string WebGatewayNode::navJson()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return navJsonLocked();
+}
+
+void WebGatewayNode::broadcastNav()
+{
+  if (server_) {
+    server_->broadcast(WsFrame{false, navJson(), {}});
+  }
+}
+
+void WebGatewayNode::sendGoal(double x, double y)
+{
+  if (!nav_client_ || !nav_client_->action_server_is_ready()) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      nav_ = NavState{};
+      nav_.state = "unavailable";  // Nav2 not running
+    }
+    broadcastNav();
+    return;
+  }
+  uint64_t seq = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    seq = ++goal_seq_;
+    nav_ = NavState{};
+    nav_.state = "pending";
+    nav_.goal = std::array<double, 2>{x, y};
+  }
+  broadcastNav();
+  RCLCPP_INFO(get_logger(), "goal (%.2f, %.2f)", x, y);
+
+  NavigateToPose::Goal goal;
+  goal.pose.header.frame_id = map_frame_;
+  goal.pose.header.stamp = now();
+  goal.pose.pose.position.x = x;
+  goal.pose.pose.position.y = y;
+  goal.pose.pose.orientation.w = 1.0;  // any final heading (yaw tolerance in nav2.yaml)
+
+  // Every callback carries the sequence number of its goal: a newer goal
+  // (or a cancel) bumps goal_seq_, and callbacks of the old one are ignored.
+  rclcpp_action::Client<NavigateToPose>::SendGoalOptions opts;
+  opts.goal_response_callback = [this, seq](NavGoalHandle::SharedPtr gh) {
+      bool superseded = false;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        superseded = seq != goal_seq_;
+        if (!superseded) {
+          goal_handle_ = gh;
+          nav_.state = gh ? "active" : "rejected";
+        }
+      }
+      if (superseded) {
+        if (gh) {
+          nav_client_->async_cancel_goal(gh);  // cancelled before it was accepted
+        }
+        return;
+      }
+      broadcastNav();
+    };
+  opts.feedback_callback = [this, seq](
+    NavGoalHandle::SharedPtr, const std::shared_ptr<const NavigateToPose::Feedback> fb) {
+      bool send = false;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (seq != goal_seq_) {
+          return;
+        }
+        nav_.distance = fb->distance_remaining;
+        nav_.eta = rclcpp::Duration(fb->estimated_time_remaining).seconds();
+        nav_.recoveries = fb->number_of_recoveries;
+        // Nav2 sends feedback at the controller rate: 2 Hz is plenty here.
+        const rclcpp::Time t = steady_clock_.now();
+        if ((t - last_feedback_broadcast_).seconds() >= 0.5) {
+          last_feedback_broadcast_ = t;
+          send = true;
+        }
+      }
+      if (send) {
+        broadcastNav();
+      }
+    };
+  opts.result_callback = [this, seq](const NavGoalHandle::WrappedResult & r) {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (seq != goal_seq_) {
+          return;
+        }
+        goal_handle_.reset();
+        switch (r.code) {
+          case rclcpp_action::ResultCode::SUCCEEDED: nav_.state = "succeeded"; break;
+          case rclcpp_action::ResultCode::ABORTED: nav_.state = "aborted"; break;
+          case rclcpp_action::ResultCode::CANCELED: nav_.state = "canceled"; break;
+          default: nav_.state = "unknown"; break;
+        }
+      }
+      RCLCPP_INFO(get_logger(), "navigation finished: %s", navJson().c_str());
+      broadcastNav();
+    };
+  nav_client_->async_send_goal(goal, opts);
+}
+
+void WebGatewayNode::cancelGoal(const char * why)
+{
+  NavGoalHandle::SharedPtr gh;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (nav_.state != "pending" && nav_.state != "active") {
+      return;  // nothing running
+    }
+    gh = goal_handle_;
+    goal_handle_.reset();
+    ++goal_seq_;  // late callbacks of this goal are ignored from now on
+    nav_.state = "canceled";
+  }
+  RCLCPP_INFO(get_logger(), "goal canceled: %s", why);
+  if (gh && nav_client_) {
+    nav_client_->async_cancel_goal(gh);
+  }
+  broadcastNav();
+}
+
+void WebGatewayNode::onPlan(nav_msgs::msg::Path::SharedPtr msg)
+{
+  // Downsample to at most ~150 points: plenty to draw, small to send.
+  const std::size_t n = msg->poses.size();
+  const std::size_t step = std::max<std::size_t>(1, n / 150);
+  json points = json::array();
+  for (std::size_t i = 0; i < n; i += step) {
+    const auto & p = msg->poses[i].pose.position;
+    points.push_back({p.x, p.y});
+  }
+  if (n > 0 && (n - 1) % step != 0) {
+    const auto & p = msg->poses.back().pose.position;
+    points.push_back({p.x, p.y});  // always keep the goal end
+  }
+  if (server_) {
+    server_->broadcast(WsFrame{false, json{{"type", "path"}, {"points", points}}.dump(), {}});
   }
 }
 
@@ -546,6 +731,7 @@ void WebGatewayNode::onWsClosed(WsClientId client)
     RCLCPP_WARN(
       get_logger(), "driver %lu disconnected: stopping", static_cast<unsigned long>(client));  // NOLINT
     applyDriveAction(action);
+    cancelGoal("driver disconnected");
     if (server_) {
       server_->broadcast(WsFrame{false, driveStateJson(), {}});
     }
@@ -568,6 +754,7 @@ std::vector<WsFrame> WebGatewayNode::initialFrames()
   if (snap_.pose_json) {
     out.push_back(WsFrame{false, *snap_.pose_json, {}});
   }
+  out.push_back(WsFrame{false, navJsonLocked(), {}});
   const auto driver = arbiter_.driver();
   out.push_back(
     WsFrame{false, json{

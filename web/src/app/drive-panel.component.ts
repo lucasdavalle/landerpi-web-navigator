@@ -22,6 +22,19 @@ import { TeleopService } from './teleop.service';
 
     <p class="gate">Estado: <b [class]="gateClass()">{{ gateText() }}</b></p>
 
+    <h2>Navegación</h2>
+    <p class="gate">{{ navText() }}
+      @if (navActive() && socket.nav().distance != null) {
+        <br><small>faltan {{ socket.nav().distance!.toFixed(2) }} m
+        @if (socket.nav().eta) { (~{{ socket.nav().eta!.toFixed(0) }} s) }</small>
+      }
+    </p>
+    @if (navActive()) {
+      <button class="stop" (click)="socket.send({ type: 'cancel' })">Cancelar navegación</button>
+    } @else {
+      <p class="help">Click en el mapa → "Ir acá". Cualquier tecla cancela la navegación.</p>
+    }
+
     <label>
       Velocidad: {{ (teleop.speed() * 100).toFixed(0) }} %
       <input type="range" min="0.2" max="1" step="0.1"
@@ -72,6 +85,14 @@ export class DrivePanelComponent {
     const g = this.socket.drive().gate;
     return g === 'teleop' || g === 'nav' ? 'ok' : g === 'no_heartbeat' || g === 'unknown' ? 'bad' : 'warn';
   });
+
+  private readonly navTexts: Record<string, string> = {
+    idle: 'sin objetivo', pending: 'enviando objetivo…', active: 'navegando',
+    succeeded: 'llegó', aborted: 'no pudo llegar', canceled: 'cancelada',
+    rejected: 'objetivo rechazado', unavailable: 'Nav2 no está corriendo',
+  };
+  readonly navText = computed(() => this.navTexts[this.socket.nav().state] ?? this.socket.nav().state);
+  readonly navActive = computed(() => ['pending', 'active'].includes(this.socket.nav().state));
 
   setSpeed(e: Event): void {
     this.teleop.speed.set(Number((e.target as HTMLInputElement).value));

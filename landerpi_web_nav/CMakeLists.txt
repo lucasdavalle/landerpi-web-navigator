@@ -22,6 +22,8 @@ find_package(Threads REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(lifecycle_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(nav2_msgs REQUIRED)
 
 # Pure logic, no rclcpp dependency: own target so it can be gtest-ed without
 # bringing up rclcpp.
@@ -140,7 +142,8 @@ target_include_directories(web_gateway_node_lib PUBLIC
 target_link_libraries(web_gateway_node_lib
   web_server auth_manager ip_filter message_codec scan_projector drive_arbiter)
 ament_target_dependencies(web_gateway_node_lib
-  rclcpp rclcpp_lifecycle lifecycle_msgs nav_msgs sensor_msgs geometry_msgs std_msgs
+  rclcpp rclcpp_lifecycle rclcpp_action nav2_msgs lifecycle_msgs nav_msgs sensor_msgs
+  geometry_msgs std_msgs
   std_srvs tf2 tf2_ros visualization_msgs)
 
 add_executable(web_gateway_node src/web_gateway_node_main.cpp)

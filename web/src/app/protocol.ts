@@ -26,6 +26,18 @@ export interface DriveState {
   gate: string;           // velocity_gate reason: idle, no_heartbeat, teleop...
 }
 
+export interface NavState {
+  /** idle, pending, active, succeeded, aborted, canceled, rejected, unavailable */
+  state: string;
+  goal: [number, number] | null;
+  distance: number | null;   // m remaining
+  eta: number | null;        // s remaining (Nav2's estimate)
+  recoveries: number;
+}
+
+/** Planned path from Nav2, map frame. */
+export type PathPoints = Array<[number, number]>;
+
 export interface GridMap {
   width: number;
   height: number;
