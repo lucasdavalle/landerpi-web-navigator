@@ -34,7 +34,9 @@ namespace landerpi_web_nav
 //   `static_root` (index.html for "/"), with path traversal rejected.
 // - `/ws` upgrades to a WebSocket that must authenticate with its first
 //   message, {"type":"auth","token":"..."}, within ws_auth_timeout; only
-//   then does it receive `initial_frames` and every broadcast.
+//   then does it get {"type":"auth_ok","client":<id>}, `initial_frames` and
+//   every broadcast. Its later text messages go to `ws_message`, and when it
+//   goes away `ws_closed` is called exactly once (both optional).
 
 struct HttpRequest
 {
@@ -71,12 +73,17 @@ struct WebServerConfig
   std::size_t ws_max_queue = 32;
 };
 
+using WsClientId = uint64_t;
+
 struct WebServerCallbacks
 {
   std::function<HttpResponse(const HttpRequest &)> api;
   std::function<bool(const std::string & token)> token_valid;
   std::function<bool(const std::string & ip)> ip_allowed;
   std::function<std::vector<WsFrame>()> initial_frames;
+  // Optional. Called on the network thread: keep them short.
+  std::function<void(WsClientId, const std::string & text)> ws_message;
+  std::function<void(WsClientId)> ws_closed;
 };
 
 struct WebServerImpl;  // keeps Boost headers out of this header

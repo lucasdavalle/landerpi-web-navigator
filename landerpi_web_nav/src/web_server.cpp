@@ -15,6 +15,7 @@
 #include "landerpi_web_nav/web_server.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <deque>
 #include <fstream>
 #include <memory>
@@ -90,8 +91,12 @@ private:
   void onRead(beast::error_code ec, std::size_t bytes);
   void writeNext();
   void onWrite(beast::error_code ec, std::size_t bytes);
+  // Unregisters and tells the gateway, once, that this client is gone.
+  void gone();
 
   websocket::stream<beast::tcp_stream> ws_;
+  WsClientId id_ = 0;
+  bool gone_ = false;
   WebServerImpl & server_;
   beast::flat_buffer buffer_;
   net::steady_timer auth_timer_;
@@ -114,6 +119,7 @@ struct WebServerImpl
   std::unique_ptr<tcp::acceptor> acceptor;
   std::thread thread;
   bool running = false;
+  std::atomic<WsClientId> next_client_id{1};
 
   mutable std::mutex sessions_mutex;
   std::set<std::shared_ptr<WsSession>> sessions;  // authenticated only
@@ -308,7 +314,20 @@ void WebServerImpl::accept()
 // WsSession implementation.
 // ----------------------------------------------------------------------------
 WsSession::WsSession(tcp::socket && socket, WebServerImpl & server)
-: ws_(std::move(socket)), server_(server), auth_timer_(ws_.get_executor()) {}
+: ws_(std::move(socket)), id_(server.next_client_id++), server_(server),
+  auth_timer_(ws_.get_executor()) {}
+
+void WsSession::gone()
+{
+  if (gone_) {
+    return;
+  }
+  gone_ = true;
+  server_.removeSession(shared_from_this());
+  if (authenticated_ && server_.callbacks.ws_closed) {
+    server_.callbacks.ws_closed(id_);
+  }
+}
 
 void WsSession::run(http::request<http::string_body> req)
 {
@@ -341,7 +360,7 @@ void WsSession::onRead(beast::error_code ec, std::size_t)
 {
   if (ec) {
     auth_timer_.cancel();
-    server_.removeSession(shared_from_this());
+    gone();
     return;
   }
   const std::string msg = beast::buffers_to_string(buffer_.data());
@@ -363,13 +382,15 @@ void WsSession::onRead(beast::error_code ec, std::size_t)
     authenticated_ = true;
     auth_timer_.cancel();
     server_.addSession(shared_from_this());
-    send(std::make_shared<const WsFrame>(WsFrame{false, R"({"type":"auth_ok"})", {}}));
+    send(
+      std::make_shared<const WsFrame>(
+        WsFrame{false, nlohmann::json{{"type", "auth_ok"}, {"client", id_}}.dump(), {}}));
     for (auto & f : server_.callbacks.initial_frames()) {
       send(std::make_shared<const WsFrame>(std::move(f)));
     }
+  } else if (server_.callbacks.ws_message) {
+    server_.callbacks.ws_message(id_, msg);
   }
-  // Stage 3 is read-only: later messages are ignored, but reading goes on
-  // so a closed tab is noticed.
   readNext();
 }
 
@@ -408,7 +429,7 @@ void WsSession::writeNext()
 void WsSession::onWrite(beast::error_code ec, std::size_t)
 {
   if (ec) {
-    server_.removeSession(shared_from_this());
+    gone();
     return;
   }
   queue_.pop_front();
@@ -419,7 +440,7 @@ void WsSession::close()
 {
   net::post(
     ws_.get_executor(), [self = shared_from_this()]() {
-      self->server_.removeSession(self);
+      self->gone();
       self->ws_.async_close(websocket::close_code::policy_error, [self](beast::error_code) {});
     });
 }

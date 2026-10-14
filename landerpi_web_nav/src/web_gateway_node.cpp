@@ -134,6 +134,8 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
     cb.token_valid = [this](const std::string & t) {return auth_->validate(t);};
     cb.ip_allowed = [this](const std::string & ip) {return ip_filter_->allows(ip);};
     cb.initial_frames = [this]() {return initialFrames();};
+    cb.ws_message = [this](WsClientId c, const std::string & t) {onWsMessage(c, t);};
+    cb.ws_closed = [this](WsClientId c) {onWsClosed(c);};
     server_ = std::make_unique<WebServer>(cfg, cb);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(get_logger(), "configure failed: %s", e.what());
@@ -163,6 +165,25 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
     [this](nav_msgs::msg::Odometry::SharedPtr) {
       std::lock_guard<std::mutex> lock(mutex_);
       snap_.last_odom = now();
+    });
+  // Driving goes through velocity_gate, never straight to the wheels.
+  teleop_pub_ = create_publisher<geometry_msgs::msg::Twist>(
+    "/a7/cmd_vel_teleop", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  heartbeat_pub_ = create_publisher<std_msgs::msg::Empty>(
+    "/a7/heartbeat", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  set_running_client_ = create_client<std_srvs::srv::SetBool>("/velocity_gate/set_running");
+  gate_status_sub_ = create_subscription<std_msgs::msg::String>(
+    "/a7/gate_status", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
+    [this](std_msgs::msg::String::SharedPtr m) {
+      bool changed = false;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        changed = gate_reason_ != m->data;
+        gate_reason_ = m->data;
+      }
+      if (changed && server_) {
+        server_->broadcast(WsFrame{false, driveStateJson(), {}});
+      }
     });
   battery_sub_ = create_subscription<std_msgs::msg::UInt16>(
     "/ros_robot_controller/battery", rclcpp::QoS(rclcpp::KeepLast(5)).reliable(),
@@ -200,6 +221,16 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_activate(const rclcpp_lifecycl
 
 WebGatewayNode::CallbackReturn WebGatewayNode::on_deactivate(const rclcpp_lifecycle::State &)
 {
+  // Whoever was driving loses control; velocity_gate also stops by itself
+  // once the heartbeats stop.
+  DriveArbiter::Action action = DriveArbiter::Action::kNone;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (arbiter_.driver()) {
+      action = arbiter_.disconnected(*arbiter_.driver());
+    }
+  }
+  applyDriveAction(action);
   pose_timer_.reset();
   scan_timer_.reset();
   status_timer_.reset();
@@ -236,6 +267,10 @@ void WebGatewayNode::releaseAll()
   pose_sub_.reset();
   odom_sub_.reset();
   battery_sub_.reset();
+  gate_status_sub_.reset();
+  teleop_pub_.reset();
+  heartbeat_pub_.reset();
+  set_running_client_.reset();
   tf_listener_.reset();
   tf_buffer_.reset();
   auth_.reset();
@@ -396,6 +431,124 @@ void WebGatewayNode::publishStatus()
 {
   if (server_->clients() > 0) {
     server_->broadcast(WsFrame{false, codec::statusJson(status()), {}});
+    server_->broadcast(WsFrame{false, driveStateJson(), {}});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Driving (stage 4). Runs on the network thread.
+// ---------------------------------------------------------------------------
+std::string WebGatewayNode::driveStateJson()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto driver = arbiter_.driver();
+  return json{
+    {"type", "drive"},
+    {"driver", driver ? json(*driver) : json(nullptr)},
+    {"gate", gate_reason_},
+  }.dump();
+}
+
+void WebGatewayNode::applyDriveAction(DriveArbiter::Action action)
+{
+  if (action == DriveArbiter::Action::kNone) {
+    return;
+  }
+  const bool enable = action == DriveArbiter::Action::kEnable;
+  if (!enable) {
+    stopTeleop();
+  }
+  if (!set_running_client_ || !set_running_client_->service_is_ready()) {
+    // On disable this is not dangerous: velocity_gate stops by itself when
+    // the heartbeats stop. On enable the browser will see gate "idle".
+    RCLCPP_WARN(get_logger(), "velocity_gate not available (set_running %d)", enable);
+    return;
+  }
+  auto req = std::make_shared<std_srvs::srv::SetBool::Request>();
+  req->data = enable;
+  set_running_client_->async_send_request(
+    req, [this, enable](rclcpp::Client<std_srvs::srv::SetBool>::SharedFuture f) {
+      const auto res = f.get();
+      if (!res->success) {
+        RCLCPP_WARN(get_logger(), "set_running(%d) refused: %s", enable, res->message.c_str());
+      }
+    });
+}
+
+void WebGatewayNode::stopTeleop()
+{
+  if (teleop_pub_) {
+    teleop_pub_->publish(geometry_msgs::msg::Twist());
+  }
+}
+
+void WebGatewayNode::onWsMessage(WsClientId client, const std::string & text)
+{
+  // Anything malformed (bad JSON, "vx": "abc", ...) is ignored: a bad
+  // message must never take the network thread down.
+  try {
+    handleWsMessage(client, json::parse(text));
+  } catch (const std::exception & e) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000, "ignoring malformed message: %s", e.what());
+  }
+}
+
+void WebGatewayNode::handleWsMessage(WsClientId client, const nlohmann::json & msg)
+{
+  const std::string type = msg.value("type", "");
+
+  if (type == "drive") {
+    DriveArbiter::Decision d;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      d = arbiter_.request(client, msg.value("enable", false));
+    }
+    if (d.granted) {
+      RCLCPP_INFO(
+        get_logger(), "client %lu %s driving", static_cast<unsigned long>(client),  // NOLINT
+        msg.value("enable", false) ? "is now" : "stopped");
+    }
+    applyDriveAction(d.action);
+    server_->broadcast(WsFrame{false, driveStateJson(), {}});
+    return;
+  }
+
+  bool is_driver = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    is_driver = arbiter_.isDriver(client);
+  }
+  if (!is_driver) {
+    return;  // viewers cannot move the robot
+  }
+  if (type == "heartbeat") {
+    heartbeat_pub_->publish(std_msgs::msg::Empty());
+  } else if (type == "teleop") {
+    geometry_msgs::msg::Twist t;
+    // velocity_gate clamps and validates again; this only avoids
+    // forwarding obvious garbage.
+    t.linear.x = msg.value("vx", 0.0);
+    t.linear.y = msg.value("vy", 0.0);
+    t.angular.z = msg.value("wz", 0.0);
+    teleop_pub_->publish(t);
+  }
+}
+
+void WebGatewayNode::onWsClosed(WsClientId client)
+{
+  DriveArbiter::Action action;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    action = arbiter_.disconnected(client);
+  }
+  if (action != DriveArbiter::Action::kNone) {
+    RCLCPP_WARN(
+      get_logger(), "driver %lu disconnected: stopping", static_cast<unsigned long>(client));  // NOLINT
+    applyDriveAction(action);
+    if (server_) {
+      server_->broadcast(WsFrame{false, driveStateJson(), {}});
+    }
   }
 }
 
@@ -415,6 +568,12 @@ std::vector<WsFrame> WebGatewayNode::initialFrames()
   if (snap_.pose_json) {
     out.push_back(WsFrame{false, *snap_.pose_json, {}});
   }
+  const auto driver = arbiter_.driver();
+  out.push_back(
+    WsFrame{false, json{
+        {"type", "drive"},
+        {"driver", driver ? json(*driver) : json(nullptr)},
+        {"gate", gate_reason_}}.dump(), {}});
   return out;
 }
 

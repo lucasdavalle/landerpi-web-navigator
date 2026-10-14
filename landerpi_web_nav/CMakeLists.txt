@@ -93,6 +93,12 @@ target_include_directories(velocity_gate PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_compile_features(velocity_gate PUBLIC cxx_std_17)
 
+add_library(drive_arbiter src/drive_arbiter.cpp)
+target_include_directories(drive_arbiter PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(drive_arbiter PUBLIC cxx_std_17)
+
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -132,7 +138,7 @@ target_include_directories(web_gateway_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(web_gateway_node_lib
-  web_server auth_manager ip_filter message_codec scan_projector)
+  web_server auth_manager ip_filter message_codec scan_projector drive_arbiter)
 ament_target_dependencies(web_gateway_node_lib
   rclcpp rclcpp_lifecycle lifecycle_msgs nav_msgs sensor_msgs geometry_msgs std_msgs
   std_srvs tf2 tf2_ros visualization_msgs)
@@ -156,7 +162,7 @@ ament_target_dependencies(velocity_gate_node rclcpp lifecycle_msgs)
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
   wall_vectorizer_node_lib ip_filter auth_manager message_codec scan_projector
-  web_server web_gateway_node_lib velocity_gate velocity_gate_node_lib
+  web_server web_gateway_node_lib velocity_gate velocity_gate_node_lib drive_arbiter
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
@@ -205,6 +211,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_velocity_gate test/test_velocity_gate.cpp)
   target_link_libraries(test_velocity_gate velocity_gate)
+
+  ament_add_gtest(test_drive_arbiter test/test_drive_arbiter.cpp)
+  target_link_libraries(test_drive_arbiter drive_arbiter)
 
   ament_add_gtest(test_map_contours test/test_map_contours.cpp)
   target_link_libraries(test_map_contours map_contours)

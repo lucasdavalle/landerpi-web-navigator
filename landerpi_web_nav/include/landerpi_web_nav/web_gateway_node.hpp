@@ -21,7 +21,11 @@
 #include <vector>
 
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
+#include <nlohmann/json.hpp>
+
+#include "geometry_msgs/msg/twist.hpp"
 #include "landerpi_web_nav/auth_manager.hpp"
+#include "landerpi_web_nav/drive_arbiter.hpp"
 #include "landerpi_web_nav/ip_filter.hpp"
 #include "landerpi_web_nav/message_codec.hpp"
 #include "landerpi_web_nav/web_server.hpp"
@@ -30,7 +34,10 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "std_msgs/msg/empty.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/u_int16.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
@@ -39,15 +46,23 @@
 namespace landerpi_web_nav
 {
 
-// Read-only web gateway (stage 3): exposes the robot's live state to the
-// browser over REST + WebSocket (see web_server.hpp), behind the home-only
-// IP filter and password/token auth.
+// Web gateway: exposes the robot's live state to the browser over REST +
+// WebSocket (see web_server.hpp), behind the home-only IP filter and
+// password/token auth (stage 3), and lets one browser at a time drive it
+// through velocity_gate (stage 4).
 //
 // ROS side: subscribes /map, /a7/walls (from wall_vectorizer), /scan_raw,
 // /pose (slam_toolbox, covariance), /odom and the battery; looks up
 // map -> base_footprint and map -> lidar frame in TF. Callbacks store the
 // latest state in a mutex-protected snapshot; timers push pose, scan and
-// status to the WebSocket clients. Commands nothing (stage 4 adds teleop).
+// status to the WebSocket clients.
+//
+// Driving (stage 4), WebSocket messages from the browser:
+//   {"type":"drive","enable":true|false}  ask for / hand back control
+//   {"type":"heartbeat"}                  driver only, ~5 Hz -> /a7/heartbeat
+//   {"type":"teleop","vx":..,"vy":..,"wz":..}  driver only -> /a7/cmd_vel_teleop
+// The gateway never publishes to the wheels itself: velocity_gate does,
+// and stops on its own if the heartbeats stop (tab closed, Wi-Fi lost).
 class WebGatewayNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
@@ -89,8 +104,17 @@ private:
   void publishStatus();
   void releaseAll();
 
+  void onWsMessage(WsClientId client, const std::string & text);
+  void handleWsMessage(WsClientId client, const nlohmann::json & msg);
+  void onWsClosed(WsClientId client);
+  void applyDriveAction(DriveArbiter::Action action);
+  void stopTeleop();
+  std::string driveStateJson();
+
   std::mutex mutex_;
   Snapshot snap_;
+  DriveArbiter arbiter_;        // guarded by mutex_
+  std::string gate_reason_ = "unknown";  // guarded by mutex_
 
   std::unique_ptr<AuthManager> auth_;
   std::unique_ptr<IpFilter> ip_filter_;
@@ -111,6 +135,10 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr battery_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr gate_status_sub_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr teleop_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr heartbeat_pub_;
+  rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr set_running_client_;
   rclcpp::TimerBase::SharedPtr pose_timer_, scan_timer_, status_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr init_finish_srv_;
 };
