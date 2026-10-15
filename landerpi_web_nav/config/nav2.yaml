@@ -173,7 +173,12 @@ local_costmap:
         enabled: true
         observation_sources: scan
         scan:
-          topic: /scan                   # filtered scan, as the stock Nav2 uses
+          topic: /scan
+          # Required: in Humble the per-source default is 0.0, which drops
+          # every laser point (the lidar sits at z = 0.093 m). Missing this
+          # left both costmaps empty and caused the stage 5 box collision.
+          min_obstacle_height: 0.0
+          max_obstacle_height: 2.0                   # filtered scan, as the stock Nav2 uses
           clearing: true
           marking: true
           data_type: "LaserScan"
@@ -209,6 +214,11 @@ global_costmap:
         observation_sources: scan
         scan:
           topic: /scan
+          # Required: in Humble the per-source default is 0.0, which drops
+          # every laser point (the lidar sits at z = 0.093 m). Missing this
+          # left both costmaps empty and caused the stage 5 box collision.
+          min_obstacle_height: 0.0
+          max_obstacle_height: 2.0
           clearing: true
           marking: true
           data_type: "LaserScan"
@@ -287,7 +297,7 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       footprint_topic: "/local_costmap/published_footprint"
-      time_before_collision: 1.2      # s of free motion required
+      time_before_collision: 2.0      # s of free motion required (1.2 still touched a box)
       simulation_time_step: 0.1
       max_points: 2                   # 3+ laser points in the way trigger it
       visualize: false
