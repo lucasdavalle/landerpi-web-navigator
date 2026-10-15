@@ -177,7 +177,7 @@ install(TARGETS covariance_stamper_node scan_recenter_node wall_vectorizer_node
 install(DIRECTORY include/
   DESTINATION include)
 
-install(DIRECTORY launch config rviz
+install(DIRECTORY launch config rviz behavior_trees
   DESTINATION share/${PROJECT_NAME})
 
 install(PROGRAMS scripts/a7_set_password

@@ -44,8 +44,11 @@ namespace landerpi_nav2_depth_layer
 // Combined with updateWithMax, so it can only add obstacles to the master
 // costmap, never clear the lidar's.
 //
-// It also publishes the obstacle points (base_footprint) as a small
-// PointCloud2 for the Collision Monitor.
+// It also publishes each classified frame (base_footprint) as a small
+// PointCloud2 (see observation_cloud.hpp): the Collision Monitor reads its
+// obstacles, and a second instance with `input: cloud` (the global
+// costmap's) reads the whole frame instead of reprocessing the image, so
+// both costmaps see the same thing at a fraction of the CPU.
 class DepthObstacleLayer : public nav2_costmap_2d::CostmapLayer
 {
 public:
@@ -64,6 +67,12 @@ public:
 
 private:
   void onImage(sensor_msgs::msg::Image::ConstSharedPtr msg);
+  void onCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+  // Rate limit shared by both inputs: true if this frame should be used.
+  bool takeFrame(const rclcpp::Time & stamp);
+  // Places a classified frame (base_footprint, at `stamp`) in the global
+  // frame and leaves it pending for updateBounds.
+  void store(const Classified & c, const rclcpp::Time & stamp);
 
   // Latest processed observation, in the costmap's global frame.
   struct Observation
@@ -81,18 +90,25 @@ private:
   // Parameters.
   std::string sensor_frame_;
   std::string base_frame_;
+  // Fixed frame for placing a frame in the world: the robot's motion is
+  // taken from odom at the image time, the map correction (slam_toolbox,
+  // which lags) at its latest. Asking map at the image time extrapolated.
+  std::string odom_frame_;
+  bool cloud_input_ = false;
+  double floor_cell_ = 0.05;
   double rate_hz_ = 5.0;
   double transform_tolerance_ = 0.3;
   ProjectionConfig projection_;
   RobotEnvelope envelope_;
   bool rolling_window_ = false;
-  // Only one layer instance (the local costmap's) should feed the Collision
-  // Monitor; the global one processes fewer frames and publishes nothing.
+  // Only one layer instance (the local costmap's) processes the image and
+  // publishes; the global one reads its cloud.
   bool publish_cloud_ = true;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr height_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_pub_;
   rclcpp::Logger logger_{rclcpp::get_logger("depth_obstacle_layer")};
 };

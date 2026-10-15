@@ -25,8 +25,10 @@
 #include "landerpi_nav2_depth_layer/depth_projector.hpp"
 #include "landerpi_nav2_depth_layer/floor_calibrator.hpp"
 #include "landerpi_nav2_depth_layer/height_classifier.hpp"
+#include "landerpi_nav2_depth_layer/observation_cloud.hpp"
 
 using landerpi_nav2_depth_layer::CameraMount;
+using landerpi_nav2_depth_layer::Classified;
 using landerpi_nav2_depth_layer::FloorFitConfig;
 using landerpi_nav2_depth_layer::Intrinsics;
 using landerpi_nav2_depth_layer::ProjectionConfig;
@@ -34,8 +36,10 @@ using landerpi_nav2_depth_layer::RobotEnvelope;
 using landerpi_nav2_depth_layer::bodyFromOptical;
 using landerpi_nav2_depth_layer::classify;
 using landerpi_nav2_depth_layer::fitFloor;
+using landerpi_nav2_depth_layer::fromCloudPoints;
 using landerpi_nav2_depth_layer::mountFromFloor;
 using landerpi_nav2_depth_layer::projectDepth;
+using landerpi_nav2_depth_layer::toCloudPoints;
 
 namespace
 {
@@ -234,4 +238,30 @@ TEST(HeightClassifier, RejectsBadEnvelope)
   RobotEnvelope negative_margin;
   negative_margin.height_margin = -0.01;
   EXPECT_THROW(classify({}, negative_margin), std::invalid_argument);
+}
+
+// The global costmap's layer rebuilds the local layer's classification from
+// its cloud: obstacles survive one by one, the floor one point per cell.
+TEST(ObservationCloud, RoundTripKeepsObstaclesAndThinsTheFloor)
+{
+  Classified c;
+  c.obstacles = {{0.8, 0.0}, {0.82, 0.01}};
+  for (int k = 0; k < 10; ++k) {
+    c.floor.emplace_back(1.0 + 0.004 * k, 0.2);  // ten points inside one 5 cm cell
+  }
+  c.floor.emplace_back(1.5, -0.3);  // another cell
+  const auto cloud = toCloudPoints(c, 0.05);
+  ASSERT_EQ(cloud.size(), 4u);
+  const Classified back = fromCloudPoints(cloud);
+  ASSERT_EQ(back.obstacles.size(), 2u);
+  EXPECT_NEAR(back.obstacles[1].x(), 0.82, 1e-9);
+  EXPECT_EQ(back.floor.size(), 2u);
+}
+
+TEST(ObservationCloud, FloorCellsAreSeparatedOnBothSidesOfZero)
+{
+  Classified c;
+  c.floor = {{0.01, -0.01}, {0.01, 0.01}, {-0.01, 0.01}};  // three cells around the origin
+  EXPECT_EQ(toCloudPoints(c, 0.05).size(), 3u);
+  EXPECT_THROW(toCloudPoints(c, 0.0), std::invalid_argument);
 }

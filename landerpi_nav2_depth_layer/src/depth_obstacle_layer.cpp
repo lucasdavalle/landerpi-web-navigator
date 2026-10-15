@@ -14,6 +14,8 @@
 
 #include "landerpi_nav2_depth_layer/depth_obstacle_layer.hpp"
 
+#include <cmath>
+
 #include <cstring>
 #include <memory>
 #include <string>
@@ -22,11 +24,14 @@
 
 #include "Eigen/Geometry"
 
+#include "landerpi_nav2_depth_layer/observation_cloud.hpp"
+
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "tf2/exceptions.h"
 #include "tf2_eigen/tf2_eigen.hpp"
+#include "tf2_ros/buffer.h"
 
 namespace landerpi_nav2_depth_layer
 {
@@ -44,6 +49,11 @@ void DepthObstacleLayer::onInitialize()
       return node->get_parameter(name_ + "." + n);
     };
   enabled_ = param("enabled", rclcpp::ParameterValue(true)).as_bool();
+  const auto input = param("input", rclcpp::ParameterValue(std::string("image"))).as_string();
+  if (input != "image" && input != "cloud") {
+    throw std::invalid_argument("depth_obstacle_layer: input must be image or cloud");
+  }
+  cloud_input_ = input == "cloud";
   const std::string camera_ns = "/ascamera/camera_publisher/depth0";
   const auto depth_topic =
     param("depth_topic", rclcpp::ParameterValue(camera_ns + "/image_raw")).as_string();
@@ -55,6 +65,8 @@ void DepthObstacleLayer::onInitialize()
     .as_string();
   base_frame_ = param("base_frame", rclcpp::ParameterValue(std::string("base_footprint")))
     .as_string();
+  odom_frame_ = param("odom_frame", rclcpp::ParameterValue(std::string("odom"))).as_string();
+  floor_cell_ = param("cloud_floor_cell", rclcpp::ParameterValue(0.05)).as_double();
   rate_hz_ = param("rate_hz", rclcpp::ParameterValue(5.0)).as_double();
   transform_tolerance_ = param("transform_tolerance", rclcpp::ParameterValue(0.3)).as_double();
   projection_.stride = param("stride", rclcpp::ParameterValue(4)).as_int();
@@ -73,8 +85,8 @@ void DepthObstacleLayer::onInitialize()
   const auto cloud_topic = param(
     "obstacle_cloud_topic", rclcpp::ParameterValue(std::string("/a7/depth_obstacles")))
     .as_string();
-  if (!(rate_hz_ > 0.0 && rate_hz_ <= 30.0) || projection_.stride < 1) {
-    throw std::invalid_argument("depth_obstacle_layer: bad rate_hz or stride");
+  if (!(rate_hz_ > 0.0 && rate_hz_ <= 30.0) || projection_.stride < 1 || !(floor_cell_ > 0.0)) {
+    throw std::invalid_argument("depth_obstacle_layer: bad rate_hz, stride or cloud_floor_cell");
   }
 
   rolling_window_ = layered_costmap_->isRolling();
@@ -84,6 +96,17 @@ void DepthObstacleLayer::onInitialize()
   matchSize();
   current_ = true;
 
+  if (cloud_input_) {
+    // Another instance of this layer already classified the frame.
+    cloud_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
+      cloud_topic, rclcpp::QoS(1).reliable(),
+      [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr m) {onCloud(std::move(m));});
+    publish_cloud_ = false;
+    RCLCPP_INFO(
+      logger_, "depth_obstacle_layer: reading classified frames from %s, %.1f Hz",
+      cloud_topic.c_str(), rate_hz_);
+    return;
+  }
   image_sub_ = node->create_subscription<sensor_msgs::msg::Image>(
     depth_topic, rclcpp::SensorDataQoS(),
     [this](sensor_msgs::msg::Image::ConstSharedPtr m) {onImage(std::move(m));});
@@ -101,8 +124,10 @@ void DepthObstacleLayer::onInitialize()
       std::lock_guard<std::mutex> lock(mutex_);
       robot_height_ = m->data;
     });
-  obstacle_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
-    cloud_topic, rclcpp::QoS(1).reliable());
+  if (publish_cloud_) {
+    obstacle_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+      cloud_topic, rclcpp::QoS(1).reliable());
+  }
 
   RCLCPP_INFO(
     logger_, "depth_obstacle_layer: %s in frame %s, %.1f Hz, stride %d", depth_topic.c_str(),
@@ -118,12 +143,10 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   if (!node) {
     return;
   }
-  // Rate limit: the camera sends ~15 Hz, the Pi also runs SLAM and Nav2.
   const rclcpp::Time stamp(msg->header.stamp, RCL_ROS_TIME);
-  if ((stamp - last_processed_).seconds() < 1.0 / rate_hz_) {
+  if (!takeFrame(stamp)) {
     return;
   }
-  last_processed_ = stamp;
 
   Intrinsics k;
   RobotEnvelope envelope = envelope_;
@@ -148,18 +171,12 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   std::memcpy(depth.data(), msg->data.data(), depth.size() * 2);
 
   Eigen::Isometry3d base_from_sensor;
-  Eigen::Isometry3d global_from_base;
   try {
     // The camera pose on the robot changes only with the posture: latest.
     base_from_sensor = tf2::transformToEigen(
       tf_->lookupTransform(base_frame_, sensor_frame_, tf2::TimePointZero));
-    // The robot in the world: at the image's time.
-    global_from_base = tf2::transformToEigen(
-      tf_->lookupTransform(
-        layered_costmap_->getGlobalFrameID(), base_frame_, stamp,
-        rclcpp::Duration::from_seconds(transform_tolerance_)));
   } catch (const tf2::TransformException & e) {
-    RCLCPP_WARN_THROTTLE(logger_, *node->get_clock(), 10000, "no transform: %s", e.what());
+    RCLCPP_WARN_THROTTLE(logger_, *node->get_clock(), 10000, "no camera pose: %s", e.what());
     return;
   }
 
@@ -169,27 +186,89 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   }
   const Classified c = classify(points, envelope);
 
-  // Obstacles for the Collision Monitor, in base_footprint (z = 0.1 m:
-  // inside any height band it checks).
-  if (publish_cloud_ && obstacle_pub_->get_subscription_count() > 0) {
+  // The classified frame for the Collision Monitor and the global costmap.
+  if (publish_cloud_) {
+    const auto cloud_points = toCloudPoints(c, floor_cell_);
     sensor_msgs::msg::PointCloud2 cloud;
     cloud.header.stamp = msg->header.stamp;
     cloud.header.frame_id = base_frame_;
     sensor_msgs::PointCloud2Modifier mod(cloud);
     mod.setPointCloud2FieldsByString(1, "xyz");
-    mod.resize(c.obstacles.size());
+    mod.resize(cloud_points.size());
     sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
     sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
     sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
-    for (const auto & o : c.obstacles) {
-      *x = static_cast<float>(o.x());
-      *y = static_cast<float>(o.y());
-      *z = 0.1f;
+    for (const auto & p : cloud_points) {
+      *x = static_cast<float>(p.x());
+      *y = static_cast<float>(p.y());
+      *z = static_cast<float>(p.z());
       ++x;
       ++y;
       ++z;
     }
     obstacle_pub_->publish(cloud);
+  }
+
+  store(c, stamp);
+}
+
+void DepthObstacleLayer::onCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
+{
+  if (!enabled_) {
+    return;
+  }
+  const rclcpp::Time stamp(msg->header.stamp, RCL_ROS_TIME);
+  if (msg->header.frame_id != base_frame_) {
+    auto node = node_.lock();
+    if (node) {
+      RCLCPP_WARN_THROTTLE(
+        logger_, *node->get_clock(), 10000, "cloud in frame %s, expected %s",
+        msg->header.frame_id.c_str(), base_frame_.c_str());
+    }
+    return;
+  }
+  if (!takeFrame(stamp)) {
+    return;
+  }
+  std::vector<Eigen::Vector3d> points;
+  points.reserve(static_cast<std::size_t>(msg->width) * msg->height);
+  sensor_msgs::PointCloud2ConstIterator<float> x(*msg, "x");
+  sensor_msgs::PointCloud2ConstIterator<float> y(*msg, "y");
+  sensor_msgs::PointCloud2ConstIterator<float> z(*msg, "z");
+  for (; x != x.end(); ++x, ++y, ++z) {
+    points.emplace_back(*x, *y, *z);
+  }
+  store(fromCloudPoints(points), stamp);
+}
+
+bool DepthObstacleLayer::takeFrame(const rclcpp::Time & stamp)
+{
+  // Rate limit: the camera sends ~15 Hz, the Pi also runs SLAM and Nav2.
+  std::lock_guard<std::mutex> lock(mutex_);
+  if ((stamp - last_processed_).seconds() < 1.0 / rate_hz_) {
+    return false;
+  }
+  last_processed_ = stamp;
+  return true;
+}
+
+void DepthObstacleLayer::store(const Classified & c, const rclcpp::Time & stamp)
+{
+  Eigen::Isometry3d global_from_base;
+  try {
+    // The robot at the frame's time through odom, the map correction at
+    // its latest (see odom_frame_).
+    global_from_base = tf2::transformToEigen(
+      tf_->lookupTransform(
+        layered_costmap_->getGlobalFrameID(), tf2::TimePointZero, base_frame_,
+        tf2_ros::fromRclcpp(stamp), odom_frame_,
+        tf2::durationFromSec(transform_tolerance_)));
+  } catch (const tf2::TransformException & e) {
+    auto node = node_.lock();
+    if (node) {
+      RCLCPP_WARN_THROTTLE(logger_, *node->get_clock(), 10000, "no transform: %s", e.what());
+    }
+    return;
   }
 
   Observation obs;

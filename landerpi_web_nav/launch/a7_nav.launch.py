@@ -39,16 +39,18 @@ NAV_NODES = [
 
 
 def generate_launch_description():
-    params = os.path.join(
-        get_package_share_directory('landerpi_web_nav'), 'config', 'nav2.yaml')
+    share = get_package_share_directory('landerpi_web_nav')
+    params = os.path.join(share, 'config', 'nav2.yaml')
+    # Fewer recovery retries than Nav2's default tree (see the XML).
+    bt_xml = os.path.join(share, 'behavior_trees', 'a7_navigate_to_pose.xml')
     raw = '/a7/nav/cmd_vel_raw'          # controller -> smoother
     checked = '/a7/nav/cmd_vel_checked'  # smoother + behaviours -> collision_monitor
     # collision_monitor -> /a7/cmd_vel_nav -> velocity_gate (topics in nav2.yaml)
 
-    def nav_node(package, executable, name, remappings=()):
+    def nav_node(package, executable, name, remappings=(), extra=None):
         return Node(
             package=package, executable=executable, name=name, output='screen',
-            parameters=[params], remappings=list(remappings))
+            parameters=[params] + ([extra] if extra else []), remappings=list(remappings))
 
     return LaunchDescription([
         nav_node('nav2_controller', 'controller_server', 'controller_server',
@@ -56,7 +58,8 @@ def generate_launch_description():
         nav_node('nav2_planner', 'planner_server', 'planner_server'),
         nav_node('nav2_behaviors', 'behavior_server', 'behavior_server',
                  [('cmd_vel', checked)]),
-        nav_node('nav2_bt_navigator', 'bt_navigator', 'bt_navigator'),
+        nav_node('nav2_bt_navigator', 'bt_navigator', 'bt_navigator',
+                 extra={'default_nav_to_pose_bt_xml': bt_xml}),
         nav_node('nav2_velocity_smoother', 'velocity_smoother', 'velocity_smoother',
                  [('cmd_vel', raw), ('cmd_vel_smoothed', checked)]),
         nav_node('nav2_collision_monitor', 'collision_monitor', 'collision_monitor'),
