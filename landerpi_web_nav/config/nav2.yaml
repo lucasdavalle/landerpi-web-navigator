@@ -197,7 +197,10 @@ local_costmap:
         odom_frame: odom
         rate_hz: 5.0
         stride: 4
-        cloud_floor_cell: 0.05              # floor in the cloud: one point per cell
+        # Floor in the cloud: one point per 2.5 cm. At the costmap's own 5 cm,
+        # the global grid (rotated against the robot) had cells that never
+        # got a floor point, so wrong marks there were never cleared.
+        cloud_floor_cell: 0.025
         min_range: 0.25
         max_range: 3.0
         floor_band: 0.015

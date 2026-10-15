@@ -31,6 +31,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/string.hpp"
 
 namespace landerpi_nav2_depth_layer
 {
@@ -98,6 +99,10 @@ private:
   std::optional<Observation> pending_;
   std::optional<Intrinsics> intrinsics_;
   double robot_height_ = 0.31;
+  // Frames are used only with the arm settled in a calibrated posture:
+  // while it moves, the camera turns but its calibrated pose does not, and
+  // walls land in the wrong cells (seen on the robot, stage 6c step B).
+  bool posture_ready_ = false;
   rclcpp::Time last_processed_{0, 0, RCL_ROS_TIME};
   // The posture the master costmap was last built with: when it changes,
   // every crouchable cell must be re-applied, not only the new ones.
@@ -126,6 +131,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr height_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr posture_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr frame_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_pub_;

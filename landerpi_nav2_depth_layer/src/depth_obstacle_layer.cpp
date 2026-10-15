@@ -121,6 +121,8 @@ void DepthObstacleLayer::onInitialize()
   envelope_.body_half_width = param("body_half_width", rclcpp::ParameterValue(0.11)).as_double();
   const auto height_topic = param(
     "height_topic", rclcpp::ParameterValue(std::string("/a7/robot_height"))).as_string();
+  const auto posture_topic = param(
+    "posture_topic", rclcpp::ParameterValue(std::string("/a7/posture"))).as_string();
   const auto frame_topic = param(
     "frame_topic", rclcpp::ParameterValue(std::string("/a7/depth_frame"))).as_string();
   publish_obstacle_cloud_ =
@@ -170,6 +172,14 @@ void DepthObstacleLayer::onInitialize()
       frame_topic.c_str(), rate_hz_, cost.c_str());
     return;
   }
+  // posture_manager: "high"/"low" when settled and calibrated, "moving",
+  // "calibrating" or "none" otherwise.
+  posture_sub_ = node->create_subscription<std_msgs::msg::String>(
+    posture_topic, rclcpp::QoS(1).reliable().transient_local(),
+    [this](std_msgs::msg::String::ConstSharedPtr m) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      posture_ready_ = m->data == "high" || m->data == "low";
+    });
   image_sub_ = node->create_subscription<sensor_msgs::msg::Image>(
     depth_topic, rclcpp::SensorDataQoS(),
     [this](sensor_msgs::msg::Image::ConstSharedPtr m) {onImage(std::move(m));});
@@ -210,8 +220,8 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   Intrinsics k;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!intrinsics_) {
-      return;  // no camera_info yet
+    if (!intrinsics_ || !posture_ready_) {
+      return;  // no camera_info yet, or the arm is moving
     }
     k = *intrinsics_;
   }
