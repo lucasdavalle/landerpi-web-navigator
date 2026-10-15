@@ -112,10 +112,10 @@ void DepthObstacleLayer::onInitialize()
   envelope_.floor_band = param("floor_band", rclcpp::ParameterValue(0.015)).as_double();
   envelope_.crouch_height = param("crouch_height", rclcpp::ParameterValue(0.20)).as_double();
   envelope_.crouch_margin = param("crouch_margin", rclcpp::ParameterValue(0.02)).as_double();
-  envelope_.stand_height = param("stand_height", rclcpp::ParameterValue(0.31)).as_double();
+  envelope_.stand_height = param("stand_height", rclcpp::ParameterValue(0.33)).as_double();
   envelope_.stand_margin = param("stand_margin", rclcpp::ParameterValue(0.05)).as_double();
   envelope_.max_range = param("obstacle_max_range", rclcpp::ParameterValue(2.5)).as_double();
-  robot_height_ = param("default_robot_height", rclcpp::ParameterValue(0.31)).as_double();
+  robot_height_ = param("default_robot_height", rclcpp::ParameterValue(0.33)).as_double();
   envelope_.body_x_min = param("body_x_min", rclcpp::ParameterValue(-0.13)).as_double();
   envelope_.body_x_max = param("body_x_max", rclcpp::ParameterValue(0.13)).as_double();
   envelope_.body_half_width = param("body_half_width", rclcpp::ParameterValue(0.11)).as_double();

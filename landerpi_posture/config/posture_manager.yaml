@@ -10,14 +10,18 @@ posture_manager:
     calibration_timeout: 2.0    # s waiting for a depth image
     postures:
       high:
-        # Camera = highest point, looking ahead and down: 31 cm tall.
-        pulses: [500, 670, 310, 10, 500]
-        height: 0.31
+        # Camera = highest point, looking ahead and down: 33 cm tall (tape).
+        # Wrist at 125, not 10 (stage 6c): at 25 deg down the top of the image
+        # was below the horizon and the camera never saw anything higher than
+        # itself, so a bed edge (30 cm) went unseen. At 12 deg down it sees up
+        # to 13 deg above the horizon. Below ~50 the wrist does not move.
+        pulses: [500, 670, 310, 125, 500]
+        height: 0.33
         front: 0.11
         back: -0.11
         half_width: 0.09
-        cam_height: 0.289       # floor fit: 28.9 cm, pitch 22.3 deg, roll 2.8 deg
-        cam_pitch: 0.389
+        cam_height: 0.304       # floor fit 2026-10-16: 30.4 cm, pitch 12.2 deg
+        cam_pitch: 0.213
         cam_roll: 0.049
         calibrated: true
       low:

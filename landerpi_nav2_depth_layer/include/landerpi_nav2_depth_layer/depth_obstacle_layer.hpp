@@ -98,7 +98,7 @@ private:
   std::mutex mutex_;
   std::optional<Observation> pending_;
   std::optional<Intrinsics> intrinsics_;
-  double robot_height_ = 0.31;
+  double robot_height_ = 0.33;
   // Frames are used only with the arm settled in a calibrated posture:
   // while it moves, the camera turns but its calibrated pose does not, and
   // walls land in the wrong cells (seen on the robot, stage 6c step B).

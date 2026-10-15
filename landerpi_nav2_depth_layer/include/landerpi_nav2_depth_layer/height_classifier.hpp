@@ -39,7 +39,7 @@ struct RobotEnvelope
   // m: standing (arm high) height. Its margin is larger: standing, anything
   // at the camera's height (a bed edge) is seen at the very top of the
   // image, noisy, and must still count.
-  double stand_height = 0.31;
+  double stand_height = 0.33;
   double stand_margin = 0.05;
   double max_range = 2.5;    // m (horizontal from the robot): ignore farther points
   // The robot's own body in base_footprint (chassis + what sticks out, plus

@@ -196,7 +196,7 @@ TEST(FloorCalibrator, NoFloorNoFit)
 
 TEST(HeightClassifier, SortsPointsByWhatTheyMeanForTheRobot)
 {
-  RobotEnvelope robot;  // floor 1.5 cm, crouched top 22 cm, standing top 36 cm
+  RobotEnvelope robot;  // floor 1.5 cm, crouched top 22 cm, standing top 38 cm
   const std::vector<Eigen::Vector3d> pts{
     {0.8, 0.0, 0.005},   // floor
     {0.8, 0.1, 0.05},    // a shoe: lower than the lidar (9 cm), the robot would hit it
@@ -226,7 +226,7 @@ TEST(HeightClassifier, ThreeCentimetreBoxIsAnObstacle)
 
 // The bed (30 cm clearance) the camera ran into in the first 6b test, seen
 // at the top of the image with noise up to 33 cm: standing it would hit it
-// (the robot is 31 cm), crouched it passes.
+// (the robot is 33 cm), crouched it passes.
 TEST(HeightClassifier, NoisyBedEdgeIsCrouchable)
 {
   RobotEnvelope robot;
@@ -237,7 +237,7 @@ TEST(HeightClassifier, NoisyBedEdgeIsCrouchable)
 }
 
 // The class limits are the postures' heights plus their margins: 22 and
-// 36 cm. The user's point: something at 24 cm does let the crouched robot
+// 38 cm. The user's point: something at 24 cm does let the crouched robot
 // (20 cm) through.
 TEST(HeightClassifier, LimitsAreEachPostureHeightPlusItsMargin)
 {
@@ -245,8 +245,8 @@ TEST(HeightClassifier, LimitsAreEachPostureHeightPlusItsMargin)
   const std::vector<Eigen::Vector3d> pts{
     {0.9, 0.0, 0.219},  // obstacle
     {0.9, 0.0, 0.24},   // crouchable
-    {0.9, 0.0, 0.359},  // crouchable
-    {0.9, 0.0, 0.361},  // above
+    {0.9, 0.0, 0.379},  // crouchable
+    {0.9, 0.0, 0.381},  // above
   };
   const auto c = classify(pts, robot);
   EXPECT_EQ(c.obstacles.size(), 1u);
