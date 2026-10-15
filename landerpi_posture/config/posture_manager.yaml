@@ -1,0 +1,33 @@
+# Arm postures for navigation (stage 6), measured on the robot 2026-10-15.
+# pulses: servos 1..5 (base, shoulder, elbow, wrist pitch, wrist roll); the
+# gripper (id 10) is never commanded (its servo is burned).
+# Footprint: front / back / half_width in base_footprint (m).
+# cam_*: fallback camera calibration (floor fit), radians for angles.
+posture_manager:
+  ros__parameters:
+    move_duration: 3.0          # s, slow on purpose
+    settle: 0.7                 # s after the move before calibrating
+    calibration_timeout: 2.0    # s waiting for a depth image
+    postures:
+      high:
+        # Camera = highest point, looking ahead and down: 31 cm tall.
+        pulses: [500, 670, 310, 10, 500]
+        height: 0.31
+        front: 0.11
+        back: -0.11
+        half_width: 0.09
+        cam_height: 0.289       # floor fit: 28.9 cm, pitch 22.3 deg, roll 2.8 deg
+        cam_pitch: 0.389
+        cam_roll: 0.049
+        calibrated: true
+      low:
+        # Arm forward and horizontal: 20 cm tall, sticks out 23 cm in front.
+        pulses: [500, 160, 500, 500, 500]
+        height: 0.20
+        front: 0.34
+        back: -0.11
+        half_width: 0.09
+        cam_height: 0.15        # ROUGH estimate, not calibrated yet
+        cam_pitch: 0.0
+        cam_roll: 0.0
+        calibrated: false

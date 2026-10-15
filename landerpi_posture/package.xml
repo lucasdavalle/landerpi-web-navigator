@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>landerpi_posture</name>
+  <version>0.1.0</version>
+  <description>
+    Arm postures for navigation on the LanderPi (stage 6): moves the arm,
+    calibrates the depth camera against the floor and publishes the camera
+    pose, the robot's height and its footprint. Robot-specific: depends on
+    the stock servo_controller_msgs (not in rosdep, so CI skips it).
+  </description>
+  <maintainer email="lucasdavalle25@gmail.com">ldavalle</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>lifecycle_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_eigen</depend>
+  <depend>eigen</depend>
+  <depend>servo_controller_msgs</depend>
+  <depend>landerpi_nav2_depth_layer</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

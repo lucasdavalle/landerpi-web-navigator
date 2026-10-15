@@ -35,6 +35,7 @@ ament_target_dependencies(depth_obstacle_layer
 pluginlib_export_plugin_description_file(nav2_costmap_2d plugins.xml)
 
 install(TARGETS depth_geometry depth_obstacle_layer
+  EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
@@ -49,5 +50,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_depth_geometry test/test_depth_geometry.cpp)
   target_link_libraries(test_depth_geometry depth_geometry)
 endif()
+
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+ament_export_include_directories(include)
+ament_export_dependencies(Eigen3 rclcpp nav2_costmap_2d pluginlib sensor_msgs std_msgs tf2 tf2_ros tf2_eigen)
 
 ament_package()
