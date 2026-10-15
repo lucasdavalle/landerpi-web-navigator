@@ -196,7 +196,8 @@ local_costmap:
         stride: 4
         min_range: 0.25
         max_range: 3.0
-        floor_band: 0.03
+        floor_band: 0.015
+        height_margin: 0.05
         obstacle_max_range: 2.5
         default_robot_height: 0.31
         body_x_min: -0.13
@@ -253,7 +254,8 @@ global_costmap:
         publish_obstacle_cloud: false       # the local costmap's layer feeds the monitor
         min_range: 0.25
         max_range: 3.0
-        floor_band: 0.03
+        floor_band: 0.015
+        height_margin: 0.05
         obstacle_max_range: 2.5
         default_robot_height: 0.31
         body_x_min: -0.13

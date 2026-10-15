@@ -23,7 +23,7 @@ namespace landerpi_nav2_depth_layer
 
 Classified classify(const std::vector<Eigen::Vector3d> & points_base, const RobotEnvelope & robot)
 {
-  if (!(robot.height > 0.0) || !(robot.max_range > 0.0) ||
+  if (!(robot.height > 0.0) || !(robot.max_range > 0.0) || !(robot.height_margin >= 0.0) ||
     !(robot.floor_band >= 0.0 && robot.floor_band < robot.height))
   {
     throw std::invalid_argument("bad robot envelope");
@@ -45,7 +45,7 @@ Classified classify(const std::vector<Eigen::Vector3d> & points_base, const Robo
     }
     if (p.z() < robot.floor_band) {
       out.floor.emplace_back(p.x(), p.y());
-    } else if (p.z() <= robot.height) {
+    } else if (p.z() <= robot.height + robot.height_margin) {
       out.obstacles.emplace_back(p.x(), p.y());
     } else {
       ++out.above;

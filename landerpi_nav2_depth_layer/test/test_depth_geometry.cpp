@@ -180,12 +180,12 @@ TEST(FloorCalibrator, NoFloorNoFit)
 
 TEST(HeightClassifier, SortsPointsByWhatTheyMeanForTheRobot)
 {
-  RobotEnvelope robot;  // 3 cm floor band, 31 cm tall
+  RobotEnvelope robot;  // 1.5 cm floor band, 31 cm tall, 5 cm margin
   const std::vector<Eigen::Vector3d> pts{
-    {0.8, 0.0, 0.01},    // floor
+    {0.8, 0.0, 0.005},   // floor
     {0.8, 0.1, 0.05},    // a shoe: lower than the lidar (9 cm), the robot would hit it
     {0.9, 0.0, 0.28},    // a table edge just under the robot's height
-    {0.9, 0.0, 0.40},    // a table top higher than the robot: passes under
+    {0.9, 0.0, 0.40},    // a table top higher than robot + margin: passes under
     {0.10, 0.0, 0.20},   // the robot's own arm
     {3.5, 0.0, 0.10},    // too far
   };
@@ -197,13 +197,31 @@ TEST(HeightClassifier, SortsPointsByWhatTheyMeanForTheRobot)
   EXPECT_EQ(c.too_far, 1u);
 }
 
+// The box the robot dragged in the first 6b test: 3 cm tall, its points read
+// 1.5-2.6 cm over the calibrated floor (the old 3 cm floor band hid it).
+TEST(HeightClassifier, ThreeCentimetreBoxIsAnObstacle)
+{
+  RobotEnvelope robot;
+  const std::vector<Eigen::Vector3d> box{{0.7, 0.0, 0.016}, {0.7, 0.02, 0.026}};
+  EXPECT_EQ(classify(box, robot).obstacles.size(), 2u);
+}
+
+// The bed edge the camera ran into: 30 cm, seen at the top of the image
+// with noise up to 33 cm, while the robot stands 31 cm tall.
+TEST(HeightClassifier, NoisyBedEdgeAtCameraHeightIsAnObstacle)
+{
+  RobotEnvelope robot;
+  const std::vector<Eigen::Vector3d> bed_edge{{0.9, 0.0, 0.30}, {0.9, 0.0, 0.33}};
+  EXPECT_EQ(classify(bed_edge, robot).obstacles.size(), 2u);
+}
+
 TEST(HeightClassifier, LowerPostureLetsMoreThroughUnder)
 {
   const std::vector<Eigen::Vector3d> bed_frame{{0.9, 0.0, 0.30}};  // the bed: 30 cm clearance
   RobotEnvelope high;
   high.height = 0.31;
   RobotEnvelope low;
-  low.height = 0.20;
+  low.height = 0.22;  // + 5 cm margin = 27 cm, still under the bed
   EXPECT_EQ(classify(bed_frame, high).obstacles.size(), 1u);  // standing: would hit it
   EXPECT_EQ(classify(bed_frame, low).above, 1u);              // crouched: passes under
 }
@@ -213,4 +231,7 @@ TEST(HeightClassifier, RejectsBadEnvelope)
   RobotEnvelope bad;
   bad.floor_band = 0.5;  // above the robot's height
   EXPECT_THROW(classify({}, bad), std::invalid_argument);
+  RobotEnvelope negative_margin;
+  negative_margin.height_margin = -0.01;
+  EXPECT_THROW(classify({}, negative_margin), std::invalid_argument);
 }

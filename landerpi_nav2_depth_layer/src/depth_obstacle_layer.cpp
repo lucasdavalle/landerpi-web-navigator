@@ -60,7 +60,8 @@ void DepthObstacleLayer::onInitialize()
   projection_.stride = param("stride", rclcpp::ParameterValue(4)).as_int();
   projection_.min_range = param("min_range", rclcpp::ParameterValue(0.25)).as_double();
   projection_.max_range = param("max_range", rclcpp::ParameterValue(3.0)).as_double();
-  envelope_.floor_band = param("floor_band", rclcpp::ParameterValue(0.03)).as_double();
+  envelope_.floor_band = param("floor_band", rclcpp::ParameterValue(0.015)).as_double();
+  envelope_.height_margin = param("height_margin", rclcpp::ParameterValue(0.05)).as_double();
   envelope_.max_range = param("obstacle_max_range", rclcpp::ParameterValue(2.5)).as_double();
   robot_height_ = param("default_robot_height", rclcpp::ParameterValue(0.31)).as_double();
   envelope_.body_x_min = param("body_x_min", rclcpp::ParameterValue(-0.13)).as_double();
