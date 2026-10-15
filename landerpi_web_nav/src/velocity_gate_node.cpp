@@ -52,6 +52,9 @@ VelocityGateNode::VelocityGateNode(const rclcpp::NodeOptions & options)
   declare_parameter<double>("command_timeout", 0.3);
   declare_parameter<double>("rate_hz", 20.0);
   declare_parameter<std::string>("output_topic", "/controller/cmd_vel");
+  // Stage 6c: zero unless posture_manager reports the arm settled ("high"
+  // or "low"). Off for setups without posture_manager.
+  declare_parameter<bool>("require_posture", false);
 
   init_finish_srv_ = create_service<std_srvs::srv::Trigger>(
     "~/init_finish",
@@ -106,6 +109,18 @@ VelocityGateNode::CallbackReturn VelocityGateNode::on_configure(const rclcpp_lif
       std::lock_guard<std::mutex> lock(mutex_);
       gate_->nav(fromTwist(*m), secs());
     });
+  if (get_parameter("require_posture").as_bool()) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      gate_->setArmSettled(false);  // until posture_manager says otherwise
+    }
+    posture_sub_ = create_subscription<std_msgs::msg::String>(
+      "/a7/posture", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
+      [this](std_msgs::msg::String::SharedPtr m) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gate_->setArmSettled(m->data == "high" || m->data == "low");
+      });
+  }
   heartbeat_sub_ = create_subscription<std_msgs::msg::Empty>(
     "/a7/heartbeat", reliable, [this](std_msgs::msg::Empty::SharedPtr) {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -173,6 +188,7 @@ VelocityGateNode::CallbackReturn VelocityGateNode::on_cleanup(const rclcpp_lifec
   teleop_sub_.reset();
   nav_sub_.reset();
   heartbeat_sub_.reset();
+  posture_sub_.reset();
   cmd_pub_.reset();
   status_pub_.reset();
   gate_.reset();

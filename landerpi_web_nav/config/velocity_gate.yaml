@@ -11,3 +11,4 @@ velocity_gate:
     command_timeout: 0.3      # s: older commands count as "stop"
     rate_hz: 20.0
     output_topic: /controller/cmd_vel
+    require_posture: true     # zero while the arm changes posture (stage 6c)

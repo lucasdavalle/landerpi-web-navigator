@@ -74,6 +74,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr teleop_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr nav_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr heartbeat_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr posture_sub_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_running_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr init_finish_srv_;
   rclcpp::TimerBase::SharedPtr timer_;

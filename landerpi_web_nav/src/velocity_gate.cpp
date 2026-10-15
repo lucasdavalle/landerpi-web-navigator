@@ -53,6 +53,7 @@ std::string toString(GateReason reason)
   switch (reason) {
     case GateReason::kIdle: return "idle";
     case GateReason::kNoHeartbeat: return "no_heartbeat";
+    case GateReason::kArmMoving: return "arm_moving";
     case GateReason::kNoCommand: return "no_command";
     case GateReason::kTeleop: return "teleop";
     case GateReason::kNav: return "nav";
@@ -110,6 +111,10 @@ GateOutput VelocityGate::update(double t)
   if (!last_heartbeat_ || t - *last_heartbeat_ > config_.heartbeat_timeout) {
     last_out_ = {};
     return {{}, GateReason::kNoHeartbeat};
+  }
+  if (!arm_settled_) {
+    last_out_ = {};
+    return {{}, GateReason::kArmMoving};
   }
 
   Velocity target;

@@ -174,3 +174,31 @@ TEST(VelocityGate, RejectsInvalidConfig)
   nan.max_vx = std::numeric_limits<double>::quiet_NaN();
   EXPECT_THROW(VelocityGate{nan}, std::invalid_argument);
 }
+
+// Stage 6c: the robot stands still while the arm changes posture, at once
+// (no ramp), and follows Nav2 again (from zero, ramped) once it settles.
+TEST(VelocityGate, StandsStillWhileTheArmMoves)
+{
+  VelocityGate gate(VelocityGateConfig{});
+  gate.setEnabled(true);
+  double t = 0.0;
+  for (int i = 0; i < 20; ++i, t += 0.05) {
+    gate.heartbeat(t);
+    gate.nav({0.2, 0.0, 0.0}, t);
+    gate.update(t);
+  }
+  gate.setArmSettled(false);
+  gate.heartbeat(t);
+  gate.nav({0.2, 0.0, 0.0}, t);
+  auto out = gate.update(t);
+  EXPECT_EQ(out.reason, GateReason::kArmMoving);
+  EXPECT_DOUBLE_EQ(out.cmd.vx, 0.0);
+
+  gate.setArmSettled(true);
+  t += 0.05;
+  gate.heartbeat(t);
+  gate.nav({0.2, 0.0, 0.0}, t);
+  out = gate.update(t);
+  EXPECT_EQ(out.reason, GateReason::kNav);
+  EXPECT_NEAR(out.cmd.vx, 0.025, 1e-9);  // ramping up from zero again
+}

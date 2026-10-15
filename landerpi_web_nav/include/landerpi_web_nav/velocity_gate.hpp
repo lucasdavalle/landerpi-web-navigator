@@ -47,6 +47,7 @@ enum class GateReason
 {
   kIdle,         // not enabled: always zero
   kNoHeartbeat,  // enabled, but the deadman tripped
+  kArmMoving,    // the arm is not settled in a posture (stage 6c)
   kNoCommand,    // enabled and alive, nobody is commanding
   kTeleop,       // following the web teleop
   kNav,          // following Nav2 (stage 5)
@@ -72,6 +73,10 @@ public:
   void setEnabled(bool enabled);
   bool enabled() const {return enabled_;}
 
+  // Stage 6c: while the arm moves (changing posture, looking up), the robot
+  // stands still. Commands are kept: Nav2 goes on once the arm settles.
+  void setArmSettled(bool settled) {arm_settled_ = settled;}
+
   void heartbeat(double t);
   void teleop(const Velocity & v, double t);
   void nav(const Velocity & v, double t);
@@ -82,6 +87,7 @@ public:
 private:
   VelocityGateConfig config_;
   bool enabled_ = false;
+  bool arm_settled_ = true;
   std::optional<double> last_heartbeat_;
   std::optional<double> teleop_time_;
   std::optional<double> nav_time_;

@@ -192,7 +192,7 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
     "/plan", rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
     [this](nav_msgs::msg::Path::SharedPtr m) {onPlan(std::move(m));});
   // Arm posture (stage 6): latched state from posture_manager.
-  go_high_client_ = create_client<std_srvs::srv::Trigger>("/posture_manager/go_high");
+  stand_client_ = create_client<std_srvs::srv::Trigger>("/posture_manager/try_stand");
   posture_sub_ = create_subscription<std_msgs::msg::String>(
     "/a7/posture", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
     [this](std_msgs::msg::String::SharedPtr m) {
@@ -200,13 +200,13 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
       {
         std::lock_guard<std::mutex> lock(mutex_);
         posture_ = m->data;
-        if (pending_enable_ && posture_ == "high") {
+        if (pending_enable_ && (posture_ == "high" || posture_ == "low")) {
           pending_enable_ = false;
           enable_now = arbiter_.driver().has_value();
         }
       }
       if (enable_now) {
-        RCLCPP_INFO(get_logger(), "arm in the high posture: enabling motion");
+        RCLCPP_INFO(get_logger(), "arm settled (%s): enabling motion", m->data.c_str());
         applyDriveAction(DriveArbiter::Action::kEnable);
       }
       if (server_) {
@@ -298,7 +298,7 @@ void WebGatewayNode::releaseAll()
   battery_sub_.reset();
   gate_status_sub_.reset();
   posture_sub_.reset();
-  go_high_client_.reset();
+  stand_client_.reset();
   plan_sub_.reset();
   nav_client_.reset();
   teleop_pub_.reset();
@@ -521,7 +521,7 @@ void WebGatewayNode::enableAfterPosture()
     applyDriveAction(DriveArbiter::Action::kEnable);
     return;
   }
-  if (!go_high_client_ || !go_high_client_->service_is_ready()) {
+  if (!stand_client_ || !stand_client_->service_is_ready()) {
     // Without posture_manager (older setups) drive as before, but say so.
     RCLCPP_WARN(get_logger(), "posture_manager not available: enabling without a posture");
     {
@@ -531,15 +531,18 @@ void WebGatewayNode::enableAfterPosture()
     applyDriveAction(DriveArbiter::Action::kEnable);
     return;
   }
-  RCLCPP_INFO(get_logger(), "raising the arm to the high posture before enabling motion");
-  go_high_client_->async_send_request(
+  // Never go_high blindly: the robot may be under a bed. try_stand looks up
+  // first and stays crouched if there is no room (stage 6c).
+  RCLCPP_INFO(get_logger(), "trying to stand up before enabling motion");
+  stand_client_->async_send_request(
     std::make_shared<std_srvs::srv::Trigger::Request>(),
     [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture f) {
       if (!f.get()->success) {
-        RCLCPP_WARN(get_logger(), "go_high refused: %s", f.get()->message.c_str());
+        RCLCPP_WARN(get_logger(), "try_stand refused: %s", f.get()->message.c_str());
       }
     });
-  // The gate is enabled from posture_sub_ once /a7/posture says "high".
+  // The gate is enabled from posture_sub_ once /a7/posture settles on
+  // "high" or "low" (crouched if there was no room above).
 }
 
 void WebGatewayNode::stopTeleop()

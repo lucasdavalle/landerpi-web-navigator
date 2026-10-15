@@ -118,8 +118,8 @@ private:
   void handleWsMessage(WsClientId client, const nlohmann::json & msg);
   void onWsClosed(WsClientId client);
   void applyDriveAction(DriveArbiter::Action action);
-  // Enabling drives the arm to the high posture first (stage 6): the gate
-  // is enabled only once posture_manager reports "high".
+  // Enabling first asks posture_manager to stand up if there is room
+  // (stage 6c, try_stand): the gate is enabled once it settles, high or low.
   void enableAfterPosture();
 
   using NavigateToPose = nav2_msgs::action::NavigateToPose;
@@ -177,7 +177,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr battery_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr gate_status_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr posture_sub_;
-  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr go_high_client_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stand_client_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr plan_sub_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr teleop_pub_;
