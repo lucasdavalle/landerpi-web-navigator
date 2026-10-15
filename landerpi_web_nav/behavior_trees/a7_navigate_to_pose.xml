@@ -4,6 +4,8 @@
   retries instead of 6. When there is no way through (a bed too low for the
   high posture) the default kept cycling recoveries for about 3 minutes; with
   2 the goal fails in well under a minute and the web shows it.
+  Stage 6c: a ControllerSelector picks FollowPath (standing) or
+  FollowPathCrouched (arm low) from /a7/controller_selector.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -15,8 +17,9 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
+        <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="/a7/controller_selector"/>
         <RecoveryNode number_of_retries="1" name="FollowPath">
-          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <FollowPath path="{path}" controller_id="{selected_controller}"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </PipelineSequence>

@@ -46,6 +46,8 @@ namespace landerpi_web_nav
 // keeps the robot still while the arm moves. Publishes /a7/crouch_status
 // (String, transient local) for the web. Without a navigation in progress
 // it does nothing: activating it never moves the arm.
+// It also picks Nav2's controller for the posture on /a7/controller_selector
+// (String, transient local): FollowPathCrouched crouched, FollowPath else.
 class CrouchCoordinatorNode : public rclcpp_lifecycle::LifecycleNode
 {
 public:
@@ -91,6 +93,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr posture_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr check_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr selector_pub_;
+  std::string selected_controller_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr go_low_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr try_stand_client_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr init_finish_srv_;

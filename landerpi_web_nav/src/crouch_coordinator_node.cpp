@@ -79,6 +79,7 @@ CrouchCoordinatorNode::CallbackReturn CrouchCoordinatorNode::on_configure(
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
   const auto latched = rclcpp::QoS(1).reliable().transient_local();
 
+  selector_pub_ = create_publisher<std_msgs::msg::String>("/a7/controller_selector", latched);
   plan_sub_ = create_subscription<nav_msgs::msg::Path>(
     "/plan", rclcpp::QoS(1).reliable(), [this](nav_msgs::msg::Path::SharedPtr m) {
       std::vector<Point2> path;
@@ -109,8 +110,24 @@ CrouchCoordinatorNode::CallbackReturn CrouchCoordinatorNode::on_configure(
     });
   posture_sub_ = create_subscription<std_msgs::msg::String>(
     "/a7/posture", latched, [this](std_msgs::msg::String::SharedPtr m) {
-      std::lock_guard<std::mutex> lock(mutex_);
-      posture_ = m->data;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        posture_ = m->data;
+      }
+      // Busy states keep the last choice: the robot is still anyway.
+      std::string controller;
+      if (m->data == "low") {
+        controller = "FollowPathCrouched";
+      } else if (m->data == "high" || m->data == "none") {
+        controller = "FollowPath";
+      }
+      if (!controller.empty() && controller != selected_controller_) {
+        selected_controller_ = controller;
+        std_msgs::msg::String s;
+        s.data = controller;
+        selector_pub_->publish(s);
+        RCLCPP_INFO(get_logger(), "controller: %s", controller.c_str());
+      }
     });
   check_sub_ = create_subscription<std_msgs::msg::String>(
     "/a7/stand_check", latched,

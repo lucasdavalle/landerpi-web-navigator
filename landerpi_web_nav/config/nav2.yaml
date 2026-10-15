@@ -96,7 +96,10 @@ controller_server:
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
-    controller_plugins: ["FollowPath"]
+    # FollowPath standing; FollowPathCrouched with the arm low (stage 6c),
+    # chosen live by the behaviour tree's ControllerSelector from
+    # /a7/controller_selector (published by crouch_coordinator).
+    controller_plugins: ["FollowPath", "FollowPathCrouched"]
 
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
@@ -150,6 +153,50 @@ controller_server:
       # door the costmap did have.
       critics: ["Oscillation", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       ObstacleFootprint.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+    FollowPathCrouched:
+      # Crouched the robot is 45 cm long with the arm in front, and under a
+      # bed the only way out is backwards: the RotationShim (Humble) cannot
+      # reverse, it turns 180 deg in place and the arm hits whatever is
+      # beside (6c demo 2, stuck between slippers and a wall). DWB alone,
+      # slower, allowed to back up slowly; PreferForward keeps it going
+      # forward whenever it can. Behind the robot it is blind (the lidar's
+      # rear sector is cut): it relies on the costmap's memory.
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: false
+      min_vel_x: -0.08
+      min_vel_y: 0.0
+      max_vel_x: 0.15
+      max_vel_y: 0.0
+      max_vel_theta: 0.6
+      min_speed_xy: 0.0
+      max_speed_xy: 0.15
+      min_speed_theta: 0.0
+      acc_lim_x: 1.0
+      acc_lim_y: 0.0
+      acc_lim_theta: 2.0
+      decel_lim_x: -1.0
+      decel_lim_y: 0.0
+      decel_lim_theta: -2.0
+      vx_samples: 15
+      vy_samples: 1
+      vtheta_samples: 20
+      sim_time: 1.5
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.3
+      xy_goal_tolerance: 0.12
+      trans_stopped_velocity: 0.05
+      short_circuit_trajectory_evaluation: true
+      stateful: true
+      critics: ["Oscillation", "ObstacleFootprint", "PreferForward", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      ObstacleFootprint.scale: 0.02
+      PreferForward.scale: 5.0
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
