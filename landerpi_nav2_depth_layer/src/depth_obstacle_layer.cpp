@@ -68,6 +68,7 @@ void DepthObstacleLayer::onInitialize()
   envelope_.body_half_width = param("body_half_width", rclcpp::ParameterValue(0.11)).as_double();
   const auto height_topic = param(
     "height_topic", rclcpp::ParameterValue(std::string("/a7/robot_height"))).as_string();
+  publish_cloud_ = param("publish_obstacle_cloud", rclcpp::ParameterValue(true)).as_bool();
   const auto cloud_topic = param(
     "obstacle_cloud_topic", rclcpp::ParameterValue(std::string("/a7/depth_obstacles")))
     .as_string();
@@ -169,7 +170,7 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
 
   // Obstacles for the Collision Monitor, in base_footprint (z = 0.1 m:
   // inside any height band it checks).
-  if (obstacle_pub_->get_subscription_count() > 0) {
+  if (publish_cloud_ && obstacle_pub_->get_subscription_count() > 0) {
     sensor_msgs::msg::PointCloud2 cloud;
     cloud.header.stamp = msg->header.stamp;
     cloud.header.frame_id = base_frame_;

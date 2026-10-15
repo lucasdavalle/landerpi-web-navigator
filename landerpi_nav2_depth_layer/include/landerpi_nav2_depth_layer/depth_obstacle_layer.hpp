@@ -85,6 +85,9 @@ private:
   ProjectionConfig projection_;
   RobotEnvelope envelope_;
   bool rolling_window_ = false;
+  // Only one layer instance (the local costmap's) should feed the Collision
+  // Monitor; the global one processes fewer frames and publishes nothing.
+  bool publish_cloud_ = true;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;

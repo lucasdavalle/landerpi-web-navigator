@@ -83,4 +83,14 @@ def generate_launch_description():
         parameters=[os.path.join(pkg_share, 'config', 'velocity_gate.yaml')],
     )
 
-    return LaunchDescription(args + [base, slam, walls, gateway, gate])
+    # Arm postures + floor-calibrated depth camera (stage 6). Moves the arm
+    # only when asked (the gateway asks for the high posture on "enable").
+    posture = Node(
+        package='landerpi_posture',
+        executable='posture_manager_node',
+        name='posture_manager',
+        parameters=[os.path.join(
+            get_package_share_directory('landerpi_posture'), 'config', 'posture_manager.yaml')],
+    )
+
+    return LaunchDescription(args + [base, slam, walls, gateway, gate, posture])
