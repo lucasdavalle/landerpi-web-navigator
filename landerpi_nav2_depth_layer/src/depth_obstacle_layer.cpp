@@ -12,12 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+
 #include "landerpi_nav2_depth_layer/depth_obstacle_layer.hpp"
 
+#include <algorithm>
 #include <cmath>
-
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,7 +27,6 @@
 #include "Eigen/Geometry"
 
 #include "landerpi_nav2_depth_layer/observation_cloud.hpp"
-
 #include "nav2_costmap_2d/cost_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
@@ -36,6 +37,35 @@
 namespace landerpi_nav2_depth_layer
 {
 
+namespace
+{
+
+sensor_msgs::msg::PointCloud2 toMsg(
+  const std::vector<Eigen::Vector3d> & points, const std::string & frame,
+  const builtin_interfaces::msg::Time & stamp)
+{
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.stamp = stamp;
+  cloud.header.frame_id = frame;
+  sensor_msgs::PointCloud2Modifier mod(cloud);
+  mod.setPointCloud2FieldsByString(1, "xyz");
+  mod.resize(points.size());
+  sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
+  sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
+  sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
+  for (const auto & p : points) {
+    *x = static_cast<float>(p.x());
+    *y = static_cast<float>(p.y());
+    *z = static_cast<float>(p.z());
+    ++x;
+    ++y;
+    ++z;
+  }
+  return cloud;
+}
+
+}  // namespace
+
 void DepthObstacleLayer::onInitialize()
 {
   auto node = node_.lock();
@@ -43,6 +73,7 @@ void DepthObstacleLayer::onInitialize()
     throw std::runtime_error("depth_obstacle_layer: node expired");
   }
   logger_ = node->get_logger();
+  clock_ = node->get_clock();
 
   auto param = [&](const std::string & n, const rclcpp::ParameterValue & v) {
       declareParameter(n, v);
@@ -54,6 +85,12 @@ void DepthObstacleLayer::onInitialize()
     throw std::invalid_argument("depth_obstacle_layer: input must be image or cloud");
   }
   cloud_input_ = input == "cloud";
+  const auto cost = param(
+    "crouchable_cost", rclcpp::ParameterValue(std::string("by_posture"))).as_string();
+  if (cost != "by_posture" && cost != "free") {
+    throw std::invalid_argument("depth_obstacle_layer: crouchable_cost must be by_posture or free");
+  }
+  crouchable_cost_ = cost == "free" ? CrouchableCost::kFree : CrouchableCost::kByPosture;
   const std::string camera_ns = "/ascamera/camera_publisher/depth0";
   const auto depth_topic =
     param("depth_topic", rclcpp::ParameterValue(camera_ns + "/image_raw")).as_string();
@@ -84,30 +121,53 @@ void DepthObstacleLayer::onInitialize()
   envelope_.body_half_width = param("body_half_width", rclcpp::ParameterValue(0.11)).as_double();
   const auto height_topic = param(
     "height_topic", rclcpp::ParameterValue(std::string("/a7/robot_height"))).as_string();
-  publish_cloud_ = param("publish_obstacle_cloud", rclcpp::ParameterValue(true)).as_bool();
-  const auto cloud_topic = param(
+  const auto frame_topic = param(
+    "frame_topic", rclcpp::ParameterValue(std::string("/a7/depth_frame"))).as_string();
+  publish_obstacle_cloud_ =
+    param("publish_obstacle_cloud", rclcpp::ParameterValue(true)).as_bool();
+  const auto obstacle_topic = param(
     "obstacle_cloud_topic", rclcpp::ParameterValue(std::string("/a7/depth_obstacles")))
     .as_string();
-  if (!(rate_hz_ > 0.0 && rate_hz_ <= 30.0) || projection_.stride < 1 || !(floor_cell_ > 0.0)) {
-    throw std::invalid_argument("depth_obstacle_layer: bad rate_hz, stride or cloud_floor_cell");
+  publish_crouch_cells_ = param("publish_crouch_cells", rclcpp::ParameterValue(false)).as_bool();
+  const auto crouch_topic = param(
+    "crouch_cells_topic", rclcpp::ParameterValue(std::string("/a7/crouch_cells"))).as_string();
+  crouch_cells_rate_ = param("crouch_cells_rate", rclcpp::ParameterValue(1.0)).as_double();
+  if (!(rate_hz_ > 0.0 && rate_hz_ <= 30.0) || projection_.stride < 1 || !(floor_cell_ > 0.0) ||
+    !(crouch_cells_rate_ > 0.0))
+  {
+    throw std::invalid_argument(
+            "depth_obstacle_layer: bad rate_hz, stride, cloud_floor_cell or crouch_cells_rate");
   }
+  classify({}, envelope_);  // validates the envelope now, not at the first image
 
   rolling_window_ = layered_costmap_->isRolling();
-  // Unknown is not this layer's business: start (and reset) to free, so
-  // updateWithMax only ever adds what the camera actually saw.
-  default_value_ = nav2_costmap_2d::FREE_SPACE;
+  // Unknown is not this layer's business: start (and reset) to free, so it
+  // only ever adds what the camera actually saw.
+  default_value_ = kFreeCell;
   matchSize();
   current_ = true;
 
+  // posture_manager publishes the current height (transient local: a late
+  // start still gets it).
+  height_sub_ = node->create_subscription<std_msgs::msg::Float32>(
+    height_topic, rclcpp::QoS(1).reliable().transient_local(),
+    [this](std_msgs::msg::Float32::ConstSharedPtr m) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      robot_height_ = m->data;
+    });
+  if (publish_crouch_cells_) {
+    crouch_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+      crouch_topic, rclcpp::QoS(1).reliable().transient_local());
+  }
+
   if (cloud_input_) {
-    // Another instance of this layer already classified the frame.
+    // The local costmap's instance already classified the frame.
     cloud_sub_ = node->create_subscription<sensor_msgs::msg::PointCloud2>(
-      cloud_topic, rclcpp::QoS(1).reliable(),
+      frame_topic, rclcpp::QoS(1).reliable(),
       [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr m) {onCloud(std::move(m));});
-    publish_cloud_ = false;
     RCLCPP_INFO(
-      logger_, "depth_obstacle_layer: reading classified frames from %s, %.1f Hz",
-      cloud_topic.c_str(), rate_hz_);
+      logger_, "depth_obstacle_layer: reading classified frames from %s, %.1f Hz, crouchable %s",
+      frame_topic.c_str(), rate_hz_, cost.c_str());
     return;
   }
   image_sub_ = node->create_subscription<sensor_msgs::msg::Image>(
@@ -119,31 +179,27 @@ void DepthObstacleLayer::onInitialize()
       std::lock_guard<std::mutex> lock(mutex_);
       intrinsics_ = Intrinsics{m->k[0], m->k[4], m->k[2], m->k[5]};
     });
-  // posture_manager publishes the current height (transient local: a late
-  // start still gets it).
-  height_sub_ = node->create_subscription<std_msgs::msg::Float32>(
-    height_topic, rclcpp::QoS(1).reliable().transient_local(),
-    [this](std_msgs::msg::Float32::ConstSharedPtr m) {
-      std::lock_guard<std::mutex> lock(mutex_);
-      robot_height_ = m->data;
-    });
-  if (publish_cloud_) {
+  frame_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
+    frame_topic, rclcpp::QoS(1).reliable());
+  if (publish_obstacle_cloud_) {
     obstacle_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
-      cloud_topic, rclcpp::QoS(1).reliable());
+      obstacle_topic, rclcpp::QoS(1).reliable());
   }
 
   RCLCPP_INFO(
-    logger_, "depth_obstacle_layer: %s in frame %s, %.1f Hz, stride %d", depth_topic.c_str(),
-    sensor_frame_.c_str(), rate_hz_, projection_.stride);
+    logger_, "depth_obstacle_layer: %s in frame %s, %.1f Hz, stride %d, crouchable %s",
+    depth_topic.c_str(), sensor_frame_.c_str(), rate_hz_, projection_.stride, cost.c_str());
+}
+
+bool DepthObstacleLayer::standing()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return robot_height_ > envelope_.crouch_height + 0.005;
 }
 
 void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
   if (!enabled_) {
-    return;
-  }
-  auto node = node_.lock();
-  if (!node) {
     return;
   }
   const rclcpp::Time stamp(msg->header.stamp, RCL_ROS_TIME);
@@ -161,7 +217,7 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   }
   if (msg->encoding != "mono16" && msg->encoding != "16UC1") {
     RCLCPP_WARN_THROTTLE(
-      logger_, *node->get_clock(), 10000, "unexpected depth encoding %s", msg->encoding.c_str());
+      logger_, *clock_, 10000, "unexpected depth encoding %s", msg->encoding.c_str());
     return;
   }
 
@@ -177,7 +233,7 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
     base_from_sensor = tf2::transformToEigen(
       tf_->lookupTransform(base_frame_, sensor_frame_, tf2::TimePointZero));
   } catch (const tf2::TransformException & e) {
-    RCLCPP_WARN_THROTTLE(logger_, *node->get_clock(), 10000, "no camera pose: %s", e.what());
+    RCLCPP_WARN_THROTTLE(logger_, *clock_, 10000, "no camera pose: %s", e.what());
     return;
   }
 
@@ -187,27 +243,24 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   }
   const Classified c = classify(points, envelope_);
 
-  // The classified frame for the Collision Monitor and the global costmap.
-  if (publish_cloud_) {
-    const auto cloud_points = toCloudPoints(c, floor_cell_);
-    sensor_msgs::msg::PointCloud2 cloud;
-    cloud.header.stamp = msg->header.stamp;
-    cloud.header.frame_id = base_frame_;
-    sensor_msgs::PointCloud2Modifier mod(cloud);
-    mod.setPointCloud2FieldsByString(1, "xyz");
-    mod.resize(cloud_points.size());
-    sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
-    sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
-    sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
-    for (const auto & p : cloud_points) {
-      *x = static_cast<float>(p.x());
-      *y = static_cast<float>(p.y());
-      *z = static_cast<float>(p.z());
-      ++x;
-      ++y;
-      ++z;
+  // The whole classified frame, for the global costmap's instance.
+  frame_pub_->publish(toMsg(toCloudPoints(c, floor_cell_), base_frame_, msg->header.stamp));
+
+  // What the robot would hit in its current posture, for the Collision
+  // Monitor (any z inside its band).
+  if (obstacle_pub_) {
+    const bool stand = standing();
+    std::vector<Eigen::Vector3d> hit;
+    hit.reserve(c.obstacles.size() + (stand ? c.crouchable.size() : 0));
+    for (const auto & o : c.obstacles) {
+      hit.emplace_back(o.x(), o.y(), kObstacleZ);
     }
-    obstacle_pub_->publish(cloud);
+    if (stand) {
+      for (const auto & o : c.crouchable) {
+        hit.emplace_back(o.x(), o.y(), kObstacleZ);
+      }
+    }
+    obstacle_pub_->publish(toMsg(hit, base_frame_, msg->header.stamp));
   }
 
   store(c, stamp);
@@ -220,12 +273,9 @@ void DepthObstacleLayer::onCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr m
   }
   const rclcpp::Time stamp(msg->header.stamp, RCL_ROS_TIME);
   if (msg->header.frame_id != base_frame_) {
-    auto node = node_.lock();
-    if (node) {
-      RCLCPP_WARN_THROTTLE(
-        logger_, *node->get_clock(), 10000, "cloud in frame %s, expected %s",
-        msg->header.frame_id.c_str(), base_frame_.c_str());
-    }
+    RCLCPP_WARN_THROTTLE(
+      logger_, *clock_, 10000, "cloud in frame %s, expected %s",
+      msg->header.frame_id.c_str(), base_frame_.c_str());
     return;
   }
   if (!takeFrame(stamp)) {
@@ -265,35 +315,19 @@ void DepthObstacleLayer::store(const Classified & c, const rclcpp::Time & stamp)
         tf2_ros::fromRclcpp(stamp), odom_frame_,
         tf2::durationFromSec(transform_tolerance_)));
   } catch (const tf2::TransformException & e) {
-    auto node = node_.lock();
-    if (node) {
-      RCLCPP_WARN_THROTTLE(logger_, *node->get_clock(), 10000, "no transform: %s", e.what());
-    }
+    RCLCPP_WARN_THROTTLE(logger_, *clock_, 10000, "no transform: %s", e.what());
     return;
   }
-
-  // What only a crouched robot passes under blocks a standing one.
-  // TODO(stage 6c, step B): keep it as its own class in the grid.
-  bool standing = true;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    standing = robot_height_ > envelope_.crouch_height + 1e-3;
-  }
-
+  auto place = [&](const std::vector<Eigen::Vector2d> & in, std::vector<Eigen::Vector2d> & out) {
+      out.reserve(in.size());
+      for (const auto & p : in) {
+        out.push_back((global_from_base * Eigen::Vector3d(p.x(), p.y(), 0.0)).head<2>());
+      }
+    };
   Observation obs;
-  obs.obstacles.reserve(c.obstacles.size() + (standing ? c.crouchable.size() : 0));
-  obs.floor.reserve(c.floor.size());
-  for (const auto & o : c.obstacles) {
-    obs.obstacles.push_back((global_from_base * Eigen::Vector3d(o.x(), o.y(), 0.0)).head<2>());
-  }
-  if (standing) {
-    for (const auto & o : c.crouchable) {
-      obs.obstacles.push_back((global_from_base * Eigen::Vector3d(o.x(), o.y(), 0.0)).head<2>());
-    }
-  }
-  for (const auto & f : c.floor) {
-    obs.floor.push_back((global_from_base * Eigen::Vector3d(f.x(), f.y(), 0.0)).head<2>());
-  }
+  place(c.obstacles, obs.obstacles);
+  place(c.crouchable, obs.crouchable);
+  place(c.floor, obs.floor);
   std::lock_guard<std::mutex> lock(mutex_);
   pending_ = std::move(obs);
 }
@@ -309,6 +343,17 @@ void DepthObstacleLayer::updateBounds(
   if (!enabled_) {
     return;
   }
+  // A posture change turns every remembered crouchable cell from blocking
+  // to free or back: rebuild the whole layer area, not only new marks.
+  const bool stand = standing();
+  if (crouchable_cost_ == CrouchableCost::kByPosture && applied_standing_ != stand) {
+    *min_x = std::min(*min_x, getOriginX());
+    *min_y = std::min(*min_y, getOriginY());
+    *max_x = std::max(*max_x, getOriginX() + getSizeInMetersX());
+    *max_y = std::max(*max_y, getOriginY() + getSizeInMetersY());
+  }
+  applied_standing_ = stand;
+
   std::optional<Observation> obs;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -319,19 +364,19 @@ void DepthObstacleLayer::updateBounds(
   }
   unsigned int mx = 0;
   unsigned int my = 0;
-  // Floor first, obstacles second: a cell with both is an obstacle.
-  for (const auto & f : obs->floor) {
-    if (worldToMap(f.x(), f.y(), mx, my)) {
-      setCost(mx, my, nav2_costmap_2d::FREE_SPACE);
-      touch(f.x(), f.y(), min_x, min_y, max_x, max_y);
-    }
-  }
-  for (const auto & o : obs->obstacles) {
-    if (worldToMap(o.x(), o.y(), mx, my)) {
-      setCost(mx, my, nav2_costmap_2d::LETHAL_OBSTACLE);
-      touch(o.x(), o.y(), min_x, min_y, max_x, max_y);
-    }
-  }
+  // Floor, then crouchable, then obstacles: within a frame the most
+  // restrictive wins; across frames the rules are in crouch_grid.hpp.
+  auto apply = [&](const std::vector<Eigen::Vector2d> & cells, Seen seen) {
+      for (const auto & w : cells) {
+        if (worldToMap(w.x(), w.y(), mx, my)) {
+          setCost(mx, my, observe(getCost(mx, my), seen));
+          touch(w.x(), w.y(), min_x, min_y, max_x, max_y);
+        }
+      }
+    };
+  apply(obs->floor, Seen::kFloor);
+  apply(obs->crouchable, Seen::kCrouchable);
+  apply(obs->obstacles, Seen::kObstacle);
 }
 
 void DepthObstacleLayer::updateCosts(
@@ -340,15 +385,54 @@ void DepthObstacleLayer::updateCosts(
   if (!enabled_) {
     return;
   }
-  // Max: this layer can add obstacles but never clear the lidar's.
-  updateWithMax(master_grid, min_i, min_j, max_i, max_j);
+  // Like updateWithMax, but each cell goes through costOf first. Max: this
+  // layer can add obstacles but never clear the lidar's.
+  const bool stand = applied_standing_.value_or(true);
+  unsigned char * master = master_grid.getCharMap();
+  const unsigned int span = master_grid.getSizeInCellsX();
+  for (int j = min_j; j < max_j; ++j) {
+    for (int i = min_i; i < max_i; ++i) {
+      const unsigned int idx = static_cast<unsigned int>(j) * span + static_cast<unsigned int>(i);
+      const unsigned char cost = costOf(costmap_[idx], crouchable_cost_, stand);
+      if (cost == kFreeCell) {
+        continue;
+      }
+      const unsigned char old = master[idx];
+      if (old == nav2_costmap_2d::NO_INFORMATION || old < cost) {
+        master[idx] = cost;
+      }
+    }
+  }
+  if (crouch_pub_ &&
+    (clock_->now() - last_crouch_publish_).seconds() >= 1.0 / crouch_cells_rate_)
+  {
+    last_crouch_publish_ = clock_->now();
+    publishCrouchCells();
+  }
+}
+
+void DepthObstacleLayer::publishCrouchCells()
+{
+  // Cell centres in the global frame (map), for crouch_coordinator.
+  std::vector<Eigen::Vector3d> cells;
+  for (unsigned int j = 0; j < size_y_; ++j) {
+    for (unsigned int i = 0; i < size_x_; ++i) {
+      if (costmap_[getIndex(i, j)] == kCrouchCell) {
+        double wx = 0.0;
+        double wy = 0.0;
+        mapToWorld(i, j, wx, wy);
+        cells.emplace_back(wx, wy, 0.0);
+      }
+    }
+  }
+  crouch_pub_->publish(toMsg(cells, layered_costmap_->getGlobalFrameID(), clock_->now()));
 }
 
 // Nav2's recoveries clear the costmaps entirely (Humble resets every layer,
 // clearable or not). This layer's memory is what covers the camera's blind
 // zone: close to a bed edge the camera no longer sees it, so forgetting it
 // made the planner find a path straight into it (6b test, 2026-10-15). Old
-// marks are still cleared, by the floor seen again in those cells.
+// obstacle marks are still cleared, by the floor seen again in those cells.
 void DepthObstacleLayer::reset()
 {
   std::lock_guard<std::mutex> lock(mutex_);

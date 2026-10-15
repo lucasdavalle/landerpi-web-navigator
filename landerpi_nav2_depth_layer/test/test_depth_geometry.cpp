@@ -23,6 +23,7 @@
 #include "Eigen/Geometry"
 
 #include "landerpi_nav2_depth_layer/clearance_check.hpp"
+#include "landerpi_nav2_depth_layer/crouch_grid.hpp"
 #include "landerpi_nav2_depth_layer/depth_projector.hpp"
 #include "landerpi_nav2_depth_layer/floor_calibrator.hpp"
 #include "landerpi_nav2_depth_layer/height_classifier.hpp"
@@ -32,12 +33,19 @@ using landerpi_nav2_depth_layer::CameraMount;
 using landerpi_nav2_depth_layer::Clearance;
 using landerpi_nav2_depth_layer::ClearanceConfig;
 using landerpi_nav2_depth_layer::Classified;
+using landerpi_nav2_depth_layer::CrouchableCost;
+using landerpi_nav2_depth_layer::Seen;
 using landerpi_nav2_depth_layer::FloorFitConfig;
 using landerpi_nav2_depth_layer::Intrinsics;
 using landerpi_nav2_depth_layer::ProjectionConfig;
 using landerpi_nav2_depth_layer::RobotEnvelope;
 using landerpi_nav2_depth_layer::bodyFromOptical;
 using landerpi_nav2_depth_layer::checkClearance;
+using landerpi_nav2_depth_layer::costOf;
+using landerpi_nav2_depth_layer::kCrouchCell;
+using landerpi_nav2_depth_layer::kFreeCell;
+using landerpi_nav2_depth_layer::kLethalCell;
+using landerpi_nav2_depth_layer::observe;
 using landerpi_nav2_depth_layer::classify;
 using landerpi_nav2_depth_layer::fitFloor;
 using landerpi_nav2_depth_layer::fromCloudPoints;
@@ -350,4 +358,31 @@ TEST(ClearanceCheck, RejectsBadInput)
   ClearanceConfig bad;
   bad.stride = 0;
   EXPECT_THROW(checkClearance(lookUpImage(0.6, 0.0), 640, 400, bad), std::invalid_argument);
+}
+
+// Driving under the bed: the floor below is always in view, the bed above
+// is not. The floor must not make the robot forget the bed.
+TEST(CrouchGrid, FloorDoesNotClearACrouchableMark)
+{
+  EXPECT_EQ(observe(kCrouchCell, Seen::kFloor), kCrouchCell);
+  EXPECT_EQ(observe(kLethalCell, Seen::kFloor), kFreeCell);  // a box that was moved away
+  EXPECT_EQ(observe(kFreeCell, Seen::kFloor), kFreeCell);
+}
+
+TEST(CrouchGrid, ObstacleWinsOverCrouchable)
+{
+  EXPECT_EQ(observe(kFreeCell, Seen::kCrouchable), kCrouchCell);
+  EXPECT_EQ(observe(kLethalCell, Seen::kCrouchable), kLethalCell);  // a bed leg under the edge
+  EXPECT_EQ(observe(kCrouchCell, Seen::kObstacle), kLethalCell);
+}
+
+TEST(CrouchGrid, CrouchableBlocksOnlyAStandingRobotInTheLocalCostmap)
+{
+  EXPECT_EQ(costOf(kCrouchCell, CrouchableCost::kByPosture, true), kLethalCell);
+  EXPECT_EQ(costOf(kCrouchCell, CrouchableCost::kByPosture, false), kFreeCell);
+  // The global costmap plans under it in any posture (the user's choice).
+  EXPECT_EQ(costOf(kCrouchCell, CrouchableCost::kFree, true), kFreeCell);
+  // Obstacles and free cells are the same in every mode.
+  EXPECT_EQ(costOf(kLethalCell, CrouchableCost::kFree, false), kLethalCell);
+  EXPECT_EQ(costOf(kFreeCell, CrouchableCost::kByPosture, true), kFreeCell);
 }

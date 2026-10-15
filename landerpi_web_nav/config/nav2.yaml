@@ -192,7 +192,8 @@ local_costmap:
         enabled: true
         sensor_frame: a7_depth_optical      # published by posture_manager
         base_frame: base_footprint
-        input: image                        # processes the camera, publishes the cloud
+        input: image                        # processes the camera, publishes the clouds
+        crouchable_cost: by_posture         # blocks a standing robot, free crouched
         odom_frame: odom
         rate_hz: 5.0
         stride: 4
@@ -256,7 +257,9 @@ global_costmap:
         # planner kept routing through (third 6b test).
         plugin: "landerpi_nav2_depth_layer::DepthObstacleLayer"
         enabled: true
-        input: cloud
+        input: cloud                        # /a7/depth_frame from the local layer
+        crouchable_cost: free               # plan under beds; the robot crouches on the way
+        publish_crouch_cells: true          # /a7/crouch_cells for crouch_coordinator
         base_frame: base_footprint
         odom_frame: odom
         rate_hz: 2.0
