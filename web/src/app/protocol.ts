@@ -23,8 +23,15 @@ export interface Status {
 
 export interface DriveState {
   driver: number | null;  // client id of whoever is driving
-  gate: string;           // velocity_gate reason: idle, no_heartbeat, teleop...
-  posture?: string;       // arm: none, moving, calibrating, high, low (stage 6)
+  gate: string;           // velocity_gate reason: idle, no_heartbeat, arm_moving, teleop...
+  /** Arm: none, moving, calibrating, high, low, looking_up, checking. */
+  posture?: string;
+  /** Where the current/last arm move goes: high, low, look_up (stage 6c). */
+  arm_target?: string;
+  /** Last look-up verdict, e.g. "blocked: 75 % readings, ..." */
+  stand_check?: string;
+  /** What crouch_coordinator is doing, e.g. "low clearance ahead: crouching". */
+  crouch_status?: string;
 }
 
 export interface NavState {
@@ -34,6 +41,16 @@ export interface NavState {
   distance: number | null;   // m remaining
   eta: number | null;        // s remaining (Nav2's estimate)
   recoveries: number;
+}
+
+/** A sequence of goals run by the gateway (stage 6c parts 2 and 3). */
+export interface MissionState {
+  kind: 'route' | 'explore';
+  /** active, done, failed, canceled */
+  state: string;
+  index: number;      // current goal, 0-based
+  total: number;      // goals in a route (exploration: visited so far)
+  message?: string;
 }
 
 /** Planned path from Nav2, map frame. */
@@ -59,27 +76,39 @@ export interface Scan {
 
 const MAP = 1;
 const SCAN = 2;
+/** The camera's grid (stage 6c): 0 nothing, 50 crouchable, 100 obstacle. */
+const DEPTH_GRID = 3;
 const VERSION = 1;
 
-export function decodeBinary(buf: ArrayBuffer): { map?: GridMap; scan?: Scan } {
+export const CROUCHABLE = 50;
+export const CAMERA_OBSTACLE = 100;
+
+function decodeGrid(buf: ArrayBuffer, v: DataView): GridMap {
+  const width = v.getUint32(4, true);
+  const height = v.getUint32(8, true);
+  return {
+    width,
+    height,
+    resolution: v.getFloat32(12, true),
+    originX: v.getFloat32(16, true),
+    originY: v.getFloat32(20, true),
+    cells: new Int8Array(buf, 24, width * height),
+  };
+}
+
+export function decodeBinary(
+  buf: ArrayBuffer,
+): { map?: GridMap; scan?: Scan; depthGrid?: GridMap } {
   const v = new DataView(buf);
   if (buf.byteLength < 4 || v.getUint8(1) !== VERSION) {
     return {};
   }
   const type = v.getUint8(0);
   if (type === MAP) {
-    const width = v.getUint32(4, true);
-    const height = v.getUint32(8, true);
-    return {
-      map: {
-        width,
-        height,
-        resolution: v.getFloat32(12, true),
-        originX: v.getFloat32(16, true),
-        originY: v.getFloat32(20, true),
-        cells: new Int8Array(buf, 24, width * height),
-      },
-    };
+    return { map: decodeGrid(buf, v) };
+  }
+  if (type === DEPTH_GRID) {
+    return { depthGrid: decodeGrid(buf, v) };
   }
   if (type === SCAN) {
     const count = v.getUint32(4, true);

@@ -1,8 +1,15 @@
 # Web UI (Angular)
 
 Browser interface of the A7 web navigator: login, live map (occupancy grid,
-walls, laser points, robot pose with its uncertainty ellipse) and keyboard
-driving through the robot's `web_gateway` / `velocity_gate`.
+walls, laser points, robot pose with its uncertainty ellipse, and what the
+depth camera found: where the robot must crouch and obstacles too low for
+the lidar), keyboard driving and "go here" through the robot's
+`web_gateway` / `velocity_gate`.
+
+A floating card shows the robot in 3D (Three.js, a model built from simple
+shapes in `robot-model.ts`) when its arm changes posture, animated over the
+same 3 s the servos take, and while it explores. Three.js is loaded on
+demand (a separate chunk), so the page itself stays light.
 
 Built on a PC (Node 20 LTS), not on the robot. Only `dist/` is copied to the
 robot, where `web_gateway` serves it on port 8000.

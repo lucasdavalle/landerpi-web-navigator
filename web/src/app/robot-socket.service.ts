@@ -2,7 +2,8 @@ import { Injectable, effect, inject, signal } from '@angular/core';
 
 import { AuthService } from './auth.service';
 import {
-  DriveState, GridMap, NavState, PathPoints, Pose, Scan, Status, Wall, decodeBinary,
+  DriveState, GridMap, MissionState, NavState, PathPoints, Pose, Scan, Status, Wall,
+  decodeBinary,
 } from './protocol';
 
 export type Link = 'disconnected' | 'connecting' | 'connected';
@@ -22,6 +23,8 @@ export class RobotSocket {
   readonly link = signal<Link>('disconnected');
   readonly clientId = signal<number | null>(null);
   readonly map = signal<GridMap | null>(null);
+  /** What the depth camera found (stage 6c): crouchable cells, low obstacles. */
+  readonly depthGrid = signal<GridMap | null>(null);
   readonly walls = signal<Wall[]>([]);
   readonly scan = signal<Scan | null>(null);
   readonly pose = signal<Pose | null>(null);
@@ -31,6 +34,7 @@ export class RobotSocket {
     state: 'idle', goal: null, distance: null, eta: null, recoveries: 0,
   });
   readonly path = signal<PathPoints>([]);
+  readonly mission = signal<MissionState | null>(null);
 
   constructor() {
     // Connect while there is a token; close when it goes away.
@@ -102,9 +106,10 @@ export class RobotSocket {
 
   private onMessage(data: string | ArrayBuffer): void {
     if (data instanceof ArrayBuffer) {
-      const { map, scan } = decodeBinary(data);
+      const { map, scan, depthGrid } = decodeBinary(data);
       if (map) this.map.set(map);
       if (scan) this.scan.set(scan);
+      if (depthGrid) this.depthGrid.set(depthGrid);
       return;
     }
     const msg = JSON.parse(data);
@@ -124,11 +129,18 @@ export class RobotSocket {
         this.status.set(msg as Status);
         break;
       case 'drive':
-        this.drive.set({ driver: msg.driver, gate: msg.gate, posture: msg.posture });
+        this.drive.set({
+          driver: msg.driver, gate: msg.gate, posture: msg.posture,
+          arm_target: msg.arm_target, stand_check: msg.stand_check,
+          crouch_status: msg.crouch_status,
+        });
         break;
       case 'nav':
         this.nav.set(msg as NavState);
         if (msg.state !== 'pending' && msg.state !== 'active') this.path.set([]);
+        break;
+      case 'mission':
+        this.mission.set(msg as MissionState);
         break;
       case 'path':
         if (this.nav().state === 'pending' || this.nav().state === 'active') {
