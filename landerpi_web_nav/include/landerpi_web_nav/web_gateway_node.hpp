@@ -122,6 +122,9 @@ private:
   // Enabling first asks posture_manager to stand up if there is room
   // (stage 6c, try_stand): the gate is enabled once it settles, high or low.
   void enableAfterPosture();
+  // A goal from the browser: straight to Nav2 if standing, else after
+  // posture_manager's try_stand settles (high, or low if there is no room).
+  void requestGoal(double x, double y);
 
   using NavigateToPose = nav2_msgs::action::NavigateToPose;
   using NavGoalHandle = rclcpp_action::ClientGoalHandle<NavigateToPose>;
@@ -148,6 +151,9 @@ private:
   std::string stand_check_;
   std::string crouch_status_;
   bool pending_enable_ = false;          // guarded by mutex_
+  // A goal waiting for the arm (stage 6c): every trajectory starts with a
+  // look up (try_stand) unless the robot already stands. Guarded by mutex_.
+  std::optional<std::array<double, 2>> pending_goal_;
 
   // Navigation state shown in the browser, guarded by mutex_.
   struct NavState

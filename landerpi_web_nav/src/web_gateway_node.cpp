@@ -197,17 +197,26 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
     "/a7/posture", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
     [this](std_msgs::msg::String::SharedPtr m) {
       bool enable_now = false;
+      std::optional<std::array<double, 2>> goal_now;
       {
         std::lock_guard<std::mutex> lock(mutex_);
         posture_ = m->data;
-        if (pending_enable_ && (posture_ == "high" || posture_ == "low")) {
+        const bool settled = posture_ == "high" || posture_ == "low";
+        if (pending_enable_ && settled) {
           pending_enable_ = false;
           enable_now = arbiter_.driver().has_value();
+        }
+        if (pending_goal_ && settled) {
+          goal_now.swap(pending_goal_);
         }
       }
       if (enable_now) {
         RCLCPP_INFO(get_logger(), "arm settled (%s): enabling motion", m->data.c_str());
         applyDriveAction(DriveArbiter::Action::kEnable);
+      }
+      if (goal_now) {
+        RCLCPP_INFO(get_logger(), "arm settled (%s): sending the goal", m->data.c_str());
+        sendGoal((*goal_now)[0], (*goal_now)[1]);
       }
       if (server_) {
         server_->broadcast(WsFrame{false, driveStateJson(), {}});
@@ -679,7 +688,7 @@ void WebGatewayNode::handleWsMessage(WsClientId client, const nlohmann::json & m
     if (!std::isfinite(x) || !std::isfinite(y)) {
       return;
     }
-    sendGoal(x, y);
+    requestGoal(x, y);
   } else if (type == "cancel") {
     cancelGoal("cancel from the browser");
   }
@@ -711,6 +720,51 @@ void WebGatewayNode::broadcastNav()
   if (server_) {
     server_->broadcast(WsFrame{false, navJson(), {}});
   }
+}
+
+void WebGatewayNode::requestGoal(double x, double y)
+{
+  bool standing = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    standing = posture_ == "high";
+  }
+  if (standing || !stand_client_ || !stand_client_->service_is_ready()) {
+    sendGoal(x, y);
+    return;
+  }
+  // Not standing (crouched, or no posture yet): look up first. posture_sub_
+  // sends the goal once the arm settles; meanwhile the browser sees it as
+  // pending, and a cancel or a key drops it.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++goal_seq_;
+    goal_handle_.reset();
+    pending_goal_ = std::array<double, 2>{x, y};
+    nav_ = NavState{};
+    nav_.state = "pending";
+    nav_.goal = std::array<double, 2>{x, y};
+  }
+  broadcastNav();
+  RCLCPP_INFO(get_logger(), "goal (%.2f, %.2f): looking up before moving", x, y);
+  stand_client_->async_send_request(
+    std::make_shared<std_srvs::srv::Trigger::Request>(),
+    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture f) {
+      const auto res = f.get();
+      if (res->message == "already standing") {
+        std::optional<std::array<double, 2>> goal;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          goal.swap(pending_goal_);
+        }
+        if (goal) {
+          sendGoal((*goal)[0], (*goal)[1]);
+        }
+      } else if (!res->success) {
+        // Busy (already moving): the goal goes out when it settles.
+        RCLCPP_WARN(get_logger(), "try_stand refused: %s", res->message.c_str());
+      }
+    });
 }
 
 void WebGatewayNode::sendGoal(double x, double y)
@@ -815,6 +869,7 @@ void WebGatewayNode::cancelGoal(const char * why)
     }
     gh = goal_handle_;
     goal_handle_.reset();
+    pending_goal_.reset();  // a goal still waiting for the arm
     ++goal_seq_;  // late callbacks of this goal are ignored from now on
     nav_.state = "canceled";
   }

@@ -152,7 +152,7 @@ controller_server:
       # front, and in the first 6c demo the robot pushed it into a wardrobe
       # door the costmap did have.
       critics: ["Oscillation", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      ObstacleFootprint.scale: 0.02
+      ObstacleFootprint.scale: 0.3       # steer away from cost, not only from lethal
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
@@ -195,7 +195,7 @@ controller_server:
       short_circuit_trajectory_evaluation: true
       stateful: true
       critics: ["Oscillation", "ObstacleFootprint", "PreferForward", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      ObstacleFootprint.scale: 0.02
+      ObstacleFootprint.scale: 0.3       # steer away from cost, not only from lethal
       PreferForward.scale: 5.0
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
@@ -265,9 +265,11 @@ local_costmap:
         body_x_max: 0.13
         body_half_width: 0.11
       inflation_layer:
+        # Avoid by steering, not braking (user request, 6c): a gentler,
+        # wider cost slope makes DWB prefer trajectories away from obstacles.
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.0
-        inflation_radius: 0.25
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.35
       always_send_full_costmap: true
 
 global_costmap:
@@ -318,9 +320,14 @@ global_costmap:
         odom_frame: odom
         rate_hz: 2.0
       inflation_layer:
+        # Wider and gentler than the defaults: planned paths bend around
+        # obstacles from further away instead of grazing them, so the
+        # Collision Monitor rarely has to brake (user request, 6c). Beyond
+        # the robot's own radius inflation only costs, it never blocks, so
+        # doorways stay passable.
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 4.0
-        inflation_radius: 0.25
+        cost_scaling_factor: 2.5
+        inflation_radius: 0.45
       always_send_full_costmap: true
 
 planner_server:
@@ -388,7 +395,10 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       footprint_topic: "/local_costmap/published_footprint"
-      time_before_collision: 2.0      # s of free motion required (1.2 still touched a box)
+      # s of free motion required. 2.0 braked well before DWB could steer
+      # around; 1.2 once touched a box, but then the costmaps were empty (the
+      # max_obstacle_height bug), so the planner did not avoid it at all.
+      time_before_collision: 1.5
       simulation_time_step: 0.1
       max_points: 2                   # 3+ laser points in the way trigger it
       visualize: false
