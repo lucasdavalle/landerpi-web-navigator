@@ -21,9 +21,8 @@ posture_manager:
         cam_roll: 0.049
         calibrated: true
       low:
-        # Arm forward and horizontal: measured 20 cm, but the floor fit puts the
-        # camera centre at 19.8 cm, so its top is higher: declared 22 cm.
-        # Sticks out 23 cm in front.
+        # Arm forward and horizontal, camera looking ahead. Sticks out 23 cm in
+        # front.
         pulses: [500, 160, 500, 500, 500]
         height: 0.20            # highest point, measured with a tape (stage 6c)
         front: 0.34
@@ -33,3 +32,12 @@ posture_manager:
         cam_pitch: 0.080
         cam_roll: 0.096
         calibrated: true
+    # Stage 6c: before standing up, turn the camera up and look. Pose found by
+    # the user with arm_teleop (19 cm: lower than the low posture, so the check
+    # itself cannot hit what it is checking for). Measured with it: under the
+    # bed 69 % readings, 98 % of them nearer than 0.5 m; open room 60 %, none.
+    look_up:
+      pulses: [500, 100, 260, 980, 500]
+      near_distance: 0.5        # m
+      min_valid_fraction: 0.3   # fewer readings: unknown, stay crouched
+      max_near_fraction: 0.05   # more near readings: blocked, stay crouched

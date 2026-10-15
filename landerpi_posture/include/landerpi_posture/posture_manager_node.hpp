@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <array>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -23,6 +24,7 @@
 #include "Eigen/Geometry"
 
 #include "geometry_msgs/msg/polygon.hpp"
+#include "landerpi_nav2_depth_layer/clearance_check.hpp"
 #include "landerpi_posture/posture.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -46,8 +48,14 @@ namespace landerpi_posture
 // plausible), then publish:
 //   TF base_footprint -> a7_depth_optical  (the calibrated camera, 10 Hz)
 //   /a7/robot_height   (Float32, transient local)
-//   /a7/posture        (String: none, moving, calibrating, high, low)
+//   /a7/posture        (String: none, moving, calibrating, high, low,
+//                       looking_up, checking)
 //   /local_costmap/footprint, /global_costmap/footprint (Polygon)
+// ~/try_stand (stage 6c) stands up only if there is room: from crouched it
+// turns the camera up (the look-up pose, lower than the low posture), and
+// on the next depth image checkClearance decides: clear -> high, blocked
+// or unknown -> back to low. The verdict goes on /a7/stand_check (String,
+// transient local).
 // Activating the node moves nothing: the arm moves only when asked.
 class PostureManagerNode : public rclcpp_lifecycle::LifecycleNode
 {
@@ -62,10 +70,16 @@ public:
   CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
 
 private:
-  enum class Phase {kNone, kMoving, kCalibrating, kReady};
+  enum class Phase {kNone, kMoving, kCalibrating, kReady, kLooking, kChecking};
 
   Posture declarePosture(const std::string & name);
   bool request(const std::string & name, std::string & message);
+  bool tryStand(std::string & message);
+  // Moves to a posture with no busy check (the caller owns the phase).
+  void startMove(const std::string & name);
+  void sendPulses(const std::array<int, 5> & pulses);
+  void checkClearance(const sensor_msgs::msg::Image & msg);
+  void finishCheck(landerpi_nav2_depth_layer::Clearance verdict, const std::string & detail);
   void onTimer();
   void onDepth(sensor_msgs::msg::Image::ConstSharedPtr msg);
   void finishCalibration(std::optional<Eigen::Isometry3d> live);
@@ -85,6 +99,8 @@ private:
   double settle_ = 0.7;
   double calibration_timeout_ = 2.0;
   CalibrationLimits limits_;
+  std::array<int, 5> look_up_pulses_{500, 100, 260, 980, 500};
+  landerpi_nav2_depth_layer::ClearanceConfig clearance_;
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -92,12 +108,14 @@ private:
   rclcpp::Publisher<servo_controller_msgs::msg::ServosPosition>::SharedPtr servo_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr height_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr check_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Polygon>::SharedPtr local_fp_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Polygon>::SharedPtr global_fp_pub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr go_high_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr go_low_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr try_stand_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr init_finish_srv_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

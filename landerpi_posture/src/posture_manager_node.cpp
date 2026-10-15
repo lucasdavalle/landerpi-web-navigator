@@ -14,14 +14,17 @@
 
 #include "landerpi_posture/posture_manager_node.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "landerpi_nav2_depth_layer/clearance_check.hpp"
 #include "landerpi_nav2_depth_layer/depth_projector.hpp"
 #include "landerpi_nav2_depth_layer/floor_calibrator.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
@@ -83,6 +86,19 @@ PostureManagerNode::CallbackReturn PostureManagerNode::on_configure(const rclcpp
     move_duration_ = declare_parameter<double>("move_duration", 3.0);
     settle_ = declare_parameter<double>("settle", 0.7);
     calibration_timeout_ = declare_parameter<double>("calibration_timeout", 2.0);
+    const auto look = declare_parameter<std::vector<int64_t>>(
+      "look_up.pulses", {500, 100, 260, 980, 500});
+    if (look.size() != 5) {
+      throw std::invalid_argument("look_up.pulses needs 5 values");
+    }
+    for (std::size_t i = 0; i < 5; ++i) {
+      look_up_pulses_[i] = static_cast<int>(look[i]);
+    }
+    look_up_pulses_ = clampPulses(look_up_pulses_);
+    clearance_.near_distance = declare_parameter<double>("look_up.near_distance", 0.5);
+    clearance_.min_valid_fraction = declare_parameter<double>("look_up.min_valid_fraction", 0.3);
+    clearance_.max_near_fraction = declare_parameter<double>("look_up.max_near_fraction", 0.05);
+    depth::checkClearance(std::vector<uint16_t>(1, 0), 1, 1, clearance_);  // validates
     if (!(move_duration_ >= 1.0 && move_duration_ <= 10.0)) {
       throw std::invalid_argument("move_duration must be in [1, 10] s (slow, on purpose)");
     }
@@ -100,6 +116,7 @@ PostureManagerNode::CallbackReturn PostureManagerNode::on_configure(const rclcpp
     "servo_controller", rclcpp::QoS(10).reliable());
   height_pub_ = create_publisher<std_msgs::msg::Float32>("/a7/robot_height", latched);
   state_pub_ = create_publisher<std_msgs::msg::String>("/a7/posture", latched);
+  check_pub_ = create_publisher<std_msgs::msg::String>("/a7/stand_check", latched);
   local_fp_pub_ = create_publisher<geometry_msgs::msg::Polygon>(
     "/local_costmap/footprint", rclcpp::QoS(1).reliable());
   global_fp_pub_ = create_publisher<geometry_msgs::msg::Polygon>(
@@ -123,6 +140,12 @@ PostureManagerNode::CallbackReturn PostureManagerNode::on_configure(const rclcpp
     };
   go_high_srv_ = create_service<std_srvs::srv::Trigger>("~/go_high", handler("high"));
   go_low_srv_ = create_service<std_srvs::srv::Trigger>("~/go_low", handler("low"));
+  try_stand_srv_ = create_service<std_srvs::srv::Trigger>(
+    "~/try_stand",
+    [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> res) {
+      res->success = tryStand(res->message);
+    });
   return CallbackReturn::SUCCESS;
 }
 
@@ -146,6 +169,7 @@ PostureManagerNode::CallbackReturn PostureManagerNode::on_cleanup(const rclcpp_l
   timer_.reset();
   go_high_srv_.reset();
   go_low_srv_.reset();
+  try_stand_srv_.reset();
   depth_sub_.reset();
   info_sub_.reset();
   servo_pub_.reset();
@@ -168,18 +192,56 @@ bool PostureManagerNode::request(const std::string & name, std::string & message
     message = "posture_manager is not active";
     return false;
   }
-  Posture p;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (phase_ == Phase::kMoving || phase_ == Phase::kCalibrating) {
-      message = "busy: already moving to " + target_;
+    if (phase_ != Phase::kNone && phase_ != Phase::kReady) {
+      message = "busy: moving to " + target_;
       return false;
     }
-    if (phase_ == Phase::kReady && current_ == name) {
-      message = "already in " + name;
+  }
+  // No "already there" shortcut: the arm may have been moved by hand (or
+  // by another tool) since, and the node cannot read the servos back.
+  startMove(name);
+  message = "moving to " + name;
+  return true;
+}
+
+bool PostureManagerNode::tryStand(std::string & message)
+{
+  if (get_current_state().id() != lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
+    message = "posture_manager is not active";
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (phase_ != Phase::kNone && phase_ != Phase::kReady) {
+      message = "busy: moving to " + target_;
+      return false;
+    }
+    if (phase_ == Phase::kReady && current_ == "high") {
+      message = "already standing";
       return true;
     }
-    p = postures_.at(name);
+    target_ = "look_up";
+    phase_ = Phase::kLooking;
+    phase_until_ = steady_.now() + rclcpp::Duration::from_seconds(move_duration_ + settle_);
+  }
+  // The look-up pose is lower than the low posture: crouched height.
+  std_msgs::msg::Float32 h;
+  h.data = static_cast<float>(postures_.at("low").height);
+  height_pub_->publish(h);
+  publishState("looking_up");
+  sendPulses(look_up_pulses_);
+  RCLCPP_INFO(get_logger(), "turning the camera up to check the room above");
+  message = "checking the room above";
+  return true;
+}
+
+void PostureManagerNode::startMove(const std::string & name)
+{
+  const Posture p = postures_.at(name);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
     target_ = name;
     phase_ = Phase::kMoving;
     phase_until_ = steady_.now() + rclcpp::Duration::from_seconds(move_duration_ + settle_);
@@ -189,25 +251,28 @@ bool PostureManagerNode::request(const std::string & name, std::string & message
   h.data = static_cast<float>(std::max(p.height, postures_.at("high").height));
   height_pub_->publish(h);
   publishState("moving");
+  sendPulses(p.pulses);
+  RCLCPP_INFO(get_logger(), "moving the arm to '%s'", name.c_str());
+}
 
+void PostureManagerNode::sendPulses(const std::array<int, 5> & pulses)
+{
   servo_controller_msgs::msg::ServosPosition cmd;
   cmd.duration = move_duration_;
   cmd.position_unit = "pulse";  // without it the message is silently ignored
   for (std::size_t i = 0; i < 5; ++i) {
     servo_controller_msgs::msg::ServoPosition s;
     s.id = static_cast<uint16_t>(i + 1);
-    s.position = static_cast<double>(p.pulses[i]);
+    s.position = static_cast<double>(pulses[i]);
     cmd.position.push_back(s);
   }
   servo_pub_->publish(cmd);
-  RCLCPP_INFO(get_logger(), "moving the arm to '%s'", name.c_str());
-  message = "moving to " + name;
-  return true;
 }
 
 void PostureManagerNode::onTimer()
 {
   bool timed_out = false;
+  bool check_timed_out = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (phase_ == Phase::kMoving && steady_.now() >= phase_until_) {
@@ -217,11 +282,21 @@ void PostureManagerNode::onTimer()
       publishState("calibrating");
     } else if (phase_ == Phase::kCalibrating && steady_.now() >= phase_until_) {
       timed_out = true;
+    } else if (phase_ == Phase::kLooking && steady_.now() >= phase_until_) {
+      // Camera up and settled: onDepth checks the next image.
+      phase_ = Phase::kChecking;
+      phase_until_ = steady_.now() + rclcpp::Duration::from_seconds(calibration_timeout_);
+      publishState("checking");
+    } else if (phase_ == Phase::kChecking && steady_.now() >= phase_until_) {
+      check_timed_out = true;
     }
   }
   if (timed_out) {
     RCLCPP_WARN(get_logger(), "no depth image to calibrate: using the stored calibration");
     finishCalibration(std::nullopt);
+  }
+  if (check_timed_out) {
+    finishCheck(depth::Clearance::kUnknown, "no depth image");
   }
 
   // Keep broadcasting the camera pose (dynamic TF: it changes with posture).
@@ -241,6 +316,15 @@ void PostureManagerNode::onTimer()
 
 void PostureManagerNode::onDepth(sensor_msgs::msg::Image::ConstSharedPtr msg)
 {
+  bool checking = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    checking = phase_ == Phase::kChecking;
+  }
+  if (checking) {
+    checkClearance(*msg);
+    return;
+  }
   std::array<double, 4> k{};
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -309,6 +393,47 @@ void PostureManagerNode::onDepth(sensor_msgs::msg::Image::ConstSharedPtr msg)
     m.roll * 180 / M_PI, fit->inliers, fit->rms * 1000,
     p.calibrated ? "" : "  <- store as cam_height / cam_pitch / cam_roll (rad)");
   finishCalibration(m.base_from_optical);
+}
+
+void PostureManagerNode::checkClearance(const sensor_msgs::msg::Image & msg)
+{
+  if ((msg.encoding != "mono16" && msg.encoding != "16UC1") || msg.step != msg.width * 2 ||
+    msg.data.size() < static_cast<std::size_t>(msg.width) * msg.height * 2)
+  {
+    return;
+  }
+  std::vector<uint16_t> img(static_cast<std::size_t>(msg.width) * msg.height);
+  std::memcpy(img.data(), msg.data.data(), img.size() * 2);
+  const auto r = depth::checkClearance(
+    img, static_cast<int>(msg.width), static_cast<int>(msg.height), clearance_);
+  char detail[96];
+  std::snprintf(
+    detail, sizeof(detail), "%.0f %% readings, %.0f %% of them closer than %.2f m",
+    r.valid_fraction * 100, r.near_fraction * 100, clearance_.near_distance);
+  finishCheck(r.verdict, detail);
+}
+
+void PostureManagerNode::finishCheck(depth::Clearance verdict, const std::string & detail)
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (phase_ != Phase::kChecking) {
+      return;  // already finished (a late image or the timeout)
+    }
+  }
+  const char * name = verdict == depth::Clearance::kClear ? "clear" :
+    verdict == depth::Clearance::kBlocked ? "blocked" : "unknown";
+  std_msgs::msg::String s;
+  s.data = std::string(name) + ": " + detail;
+  check_pub_->publish(s);
+  if (verdict == depth::Clearance::kClear) {
+    RCLCPP_INFO(get_logger(), "room above (%s): standing up", detail.c_str());
+    startMove("high");
+  } else {
+    RCLCPP_WARN(
+      get_logger(), "not standing up, %s above (%s): staying crouched", name, detail.c_str());
+    startMove("low");
+  }
 }
 
 Eigen::Isometry3d PostureManagerNode::storedMount(const Posture & p)
