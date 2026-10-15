@@ -19,10 +19,11 @@ so goals can be set in space discovered a moment ago.
 
 SAFETY: every velocity Nav2 produces goes through collision_monitor
 ("approach": blocks motion that would hit something, lets turns through)
-and then to /a7/cmd_vel_nav, which only velocity_gate reads. Nothing here may publish on /cmd_vel or
-/controller/cmd_vel: the stock odom_publisher listens on /cmd_vel and would
-drive the wheels bypassing the gate. That includes behavior_server, whose
-recoveries (spin, back up) publish their own cmd_vel in Humble.
+and then to /a7/cmd_vel_nav, which only velocity_gate reads. Nothing here
+may publish on /cmd_vel or /controller/cmd_vel: the stock odom_publisher
+listens on /cmd_vel and would drive the wheels bypassing the gate. That
+includes behavior_server, whose recoveries (spin, back up) publish their own
+cmd_vel in Humble.
 """
 
 import os
