@@ -251,9 +251,13 @@ void DepthObstacleLayer::updateCosts(
   updateWithMax(master_grid, min_i, min_j, max_i, max_j);
 }
 
+// Nav2's recoveries clear the costmaps entirely (Humble resets every layer,
+// clearable or not). This layer's memory is what covers the camera's blind
+// zone: close to a bed edge the camera no longer sees it, so forgetting it
+// made the planner find a path straight into it (6b test, 2026-10-15). Old
+// marks are still cleared, by the floor seen again in those cells.
 void DepthObstacleLayer::reset()
 {
-  resetMaps();
   std::lock_guard<std::mutex> lock(mutex_);
   pending_.reset();
   current_ = true;

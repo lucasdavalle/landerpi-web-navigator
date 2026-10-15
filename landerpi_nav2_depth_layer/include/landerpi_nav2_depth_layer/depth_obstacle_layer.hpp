@@ -58,8 +58,9 @@ public:
   void updateCosts(
     nav2_costmap_2d::Costmap2D & master_grid, int min_i, int min_j, int max_i,
     int max_j) override;
+  // Keeps what the camera saw: see the .cpp.
   void reset() override;
-  bool isClearable() override {return true;}
+  bool isClearable() override {return false;}
 
 private:
   void onImage(sensor_msgs::msg::Image::ConstSharedPtr msg);
