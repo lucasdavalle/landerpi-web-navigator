@@ -22,7 +22,7 @@ posture_manager:
         half_width: 0.09
         cam_height: 0.304       # floor fit 2026-10-16: 30.4 cm, pitch 12.2 deg
         cam_pitch: 0.213
-        cam_roll: 0.049
+        cam_roll: 0.051         # 2.9 deg (2026-10-16)
         calibrated: true
       low:
         # Arm forward and horizontal, camera looking ahead. Sticks out 23 cm in
