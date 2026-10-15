@@ -1,0 +1,12 @@
+# Crouches and stands the robot up during a navigation (stage 6c). Same
+# names as declare_parameter in crouch_coordinator_node.cpp.
+crouch_coordinator:
+  ros__parameters:
+    lookahead: 1.0          # m of plan checked ahead for low clearance
+    corridor: 0.15          # m: crouchable cells this close to the plan are on it
+    near_radius: 0.5        # m: crouchable cells this close keep the robot crouched
+    retry_distance: 0.3     # m to move before looking up again after a "no"
+    request_timeout: 3.0    # s for posture_manager to start acting
+    plan_timeout: 3.0       # s without a new /plan: not navigating any more
+    map_frame: map
+    base_frame: base_footprint

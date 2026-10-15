@@ -11,5 +11,6 @@ cd /home/ubuntu/shared/a7_bags
 nohup ros2 bag record -o "${1:-nav}_$(date +%Y%m%d_%H%M%S)" \
   /plan /local_costmap/costmap /global_costmap/costmap /local_costmap/published_footprint \
   /a7/nav/cmd_vel_raw /a7/nav/cmd_vel_checked /a7/cmd_vel_nav /controller/cmd_vel \
-  /a7/gate_status /a7/depth_obstacles /a7/posture /scan /tf /tf_static /rosout \
+  /a7/gate_status /a7/depth_obstacles /a7/posture /a7/stand_check /a7/crouch_status \
+  /a7/crouch_cells /a7/robot_height /scan /tf /tf_static /rosout \
   > /tmp/a7_logs/nav_bag.log 2>&1 &

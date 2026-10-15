@@ -101,6 +101,12 @@ target_include_directories(drive_arbiter PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_compile_features(drive_arbiter PUBLIC cxx_std_17)
 
+add_library(crouch_planner src/crouch_planner.cpp)
+target_include_directories(crouch_planner PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(crouch_planner PUBLIC cxx_std_17)
+
 add_library(covariance_stamper_node_lib src/covariance_stamper_node.cpp)
 target_include_directories(covariance_stamper_node_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -162,16 +168,29 @@ add_executable(velocity_gate_node src/velocity_gate_node_main.cpp)
 target_link_libraries(velocity_gate_node velocity_gate_node_lib)
 ament_target_dependencies(velocity_gate_node rclcpp lifecycle_msgs)
 
+add_library(crouch_coordinator_node_lib src/crouch_coordinator_node.cpp)
+target_include_directories(crouch_coordinator_node_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(crouch_coordinator_node_lib crouch_planner)
+ament_target_dependencies(crouch_coordinator_node_lib
+  rclcpp rclcpp_lifecycle lifecycle_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros)
+
+add_executable(crouch_coordinator_node src/crouch_coordinator_node_main.cpp)
+target_link_libraries(crouch_coordinator_node crouch_coordinator_node_lib)
+ament_target_dependencies(crouch_coordinator_node rclcpp lifecycle_msgs)
+
 install(TARGETS covariance_stamper covariance_stamper_node_lib
   scan_recenter scan_recenter_node_lib line_extractor map_contours
   wall_vectorizer_node_lib ip_filter auth_manager message_codec scan_projector
   web_server web_gateway_node_lib velocity_gate velocity_gate_node_lib drive_arbiter
+  crouch_planner crouch_coordinator_node_lib
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
 
 install(TARGETS covariance_stamper_node scan_recenter_node wall_vectorizer_node
-  web_gateway_node velocity_gate_node
+  web_gateway_node velocity_gate_node crouch_coordinator_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/
@@ -188,6 +207,9 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_crouch_planner test/test_crouch_planner.cpp)
+  target_link_libraries(test_crouch_planner crouch_planner)
+
   ament_add_gtest(test_covariance_stamper test/test_covariance_stamper.cpp)
   target_link_libraries(test_covariance_stamper covariance_stamper)
 

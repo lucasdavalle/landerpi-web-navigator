@@ -63,6 +63,11 @@ def generate_launch_description():
         nav_node('nav2_velocity_smoother', 'velocity_smoother', 'velocity_smoother',
                  [('cmd_vel', raw), ('cmd_vel_smoothed', checked)]),
         nav_node('nav2_collision_monitor', 'collision_monitor', 'collision_monitor'),
+        # Stage 6c: crouches under low things on the plan, stands up after.
+        Node(
+            package='landerpi_web_nav', executable='crouch_coordinator_node',
+            name='crouch_coordinator', output='screen',
+            parameters=[os.path.join(share, 'config', 'crouch_coordinator.yaml')]),
         Node(
             package='nav2_lifecycle_manager', executable='lifecycle_manager',
             name='lifecycle_manager_navigation', output='screen',
