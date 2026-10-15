@@ -1,0 +1,8 @@
+<library path="depth_obstacle_layer">
+  <class type="landerpi_nav2_depth_layer::DepthObstacleLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Obstacles from the depth camera, classified by height against the
+      robot's current posture (stage 6b).
+    </description>
+  </class>
+</library>
