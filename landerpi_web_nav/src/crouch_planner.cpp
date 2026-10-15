@@ -49,7 +49,7 @@ CrouchPlanner::CrouchPlanner(const CrouchPlannerConfig & config)
 : config_(config)
 {
   for (const double v : {config.lookahead, config.corridor, config.near_radius,
-      config.retry_distance, config.request_timeout})
+      config.retry_distance, config.arm_clearance, config.request_timeout})
   {
     if (!std::isfinite(v) || v <= 0.0) {
       throw std::invalid_argument("crouch planner distances and timeout must be > 0");
@@ -109,7 +109,7 @@ bool CrouchPlanner::crouchableNear(const Point2 & robot, const std::vector<Point
 
 CrouchDecision CrouchPlanner::update(
   double t, ArmPosture posture, const Point2 & robot, const std::vector<Point2> & path,
-  const std::vector<Point2> & crouch_cells)
+  const std::vector<Point2> & crouch_cells, bool obstacle_near)
 {
   if (posture == ArmPosture::kBusy) {
     requested_at_.reset();  // posture_manager took the request
@@ -138,6 +138,9 @@ CrouchDecision CrouchPlanner::update(
   // Crouched.
   if (ahead || crouchableNear(robot, crouch_cells)) {
     return {CrouchAction::kNone, "crouched, low clearance here or ahead"};
+  }
+  if (obstacle_near) {
+    return {CrouchAction::kNone, "crouched, too close to something to move the arm"};
   }
   if (refused_at_ && dist(robot, *refused_at_) < config_.retry_distance) {
     return {CrouchAction::kNone, "crouched, no room above last time I looked"};

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "landerpi_web_nav/crouch_planner.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/lifecycle_node.hpp"
@@ -39,6 +40,7 @@ namespace landerpi_web_nav
 //   /plan (Nav2's global plan, map), fresh only while navigating
 //   /a7/crouch_cells (PointCloud2, map): from the global depth layer
 //   /a7/posture, /a7/stand_check: from posture_manager
+//   /local_costmap/costmap: obstacles near the robot (no arm moves there)
 //   TF map -> base_footprint
 // It acts through posture_manager (~/go_low, ~/try_stand); velocity_gate
 // keeps the robot still while the arm moves. Publishes /a7/crouch_status
@@ -62,6 +64,8 @@ private:
   void call(
     const rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr & client, const std::string & what);
   std::optional<Point2> robotInMap();
+  // A lethal cell of the local costmap within arm_clearance of the robot.
+  bool obstacleNear();
   void publishStatus(const std::string & status);
 
   std::mutex mutex_;
@@ -69,6 +73,8 @@ private:
   std::vector<Point2> path_;
   rclcpp::Time path_received_{0, 0, RCL_STEADY_TIME};
   std::vector<Point2> crouch_cells_;
+  nav_msgs::msg::OccupancyGrid::SharedPtr local_costmap_;
+  double arm_clearance_ = 0.45;
   std::string posture_ = "none";
   bool stand_pending_ = false;  // we asked try_stand and await its verdict
   std::string last_status_;
@@ -81,6 +87,7 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr plan_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cells_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr posture_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr check_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;

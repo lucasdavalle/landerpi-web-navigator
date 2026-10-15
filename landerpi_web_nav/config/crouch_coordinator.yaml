@@ -6,6 +6,7 @@ crouch_coordinator:
     corridor: 0.15          # m: crouchable cells this close to the plan are on it
     near_radius: 0.5        # m: crouchable cells this close keep the robot crouched
     retry_distance: 0.3     # m to move before looking up again after a "no"
+    arm_clearance: 0.45     # m: no look-up gesture with an obstacle this close
     request_timeout: 3.0    # s for posture_manager to start acting
     plan_timeout: 3.0       # s without a new /plan: not navigating any more
     map_frame: map

@@ -144,8 +144,12 @@ controller_server:
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: true
       stateful: true
-      critics: ["Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
+      # ObstacleFootprint, not BaseObstacle: BaseObstacle checks only the
+      # cost under the robot's centre. Crouched, the arm sticks out 34 cm in
+      # front, and in the first 6c demo the robot pushed it into a wardrobe
+      # door the costmap did have.
+      critics: ["Oscillation", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      ObstacleFootprint.scale: 0.02
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0

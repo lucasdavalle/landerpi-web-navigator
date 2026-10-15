@@ -16,6 +16,7 @@
 #include "landerpi_web_nav/crouch_coordinator_node.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <utility>
@@ -35,6 +36,7 @@ CrouchCoordinatorNode::CrouchCoordinatorNode(const rclcpp::NodeOptions & options
   declare_parameter<double>("corridor", 0.15);
   declare_parameter<double>("near_radius", 0.5);
   declare_parameter<double>("retry_distance", 0.3);
+  declare_parameter<double>("arm_clearance", 0.45);
   declare_parameter<double>("request_timeout", 3.0);
   declare_parameter<double>("plan_timeout", 3.0);
   declare_parameter<std::string>("map_frame", "map");
@@ -57,6 +59,8 @@ CrouchCoordinatorNode::CallbackReturn CrouchCoordinatorNode::on_configure(
   cfg.corridor = get_parameter("corridor").as_double();
   cfg.near_radius = get_parameter("near_radius").as_double();
   cfg.retry_distance = get_parameter("retry_distance").as_double();
+  cfg.arm_clearance = get_parameter("arm_clearance").as_double();
+  arm_clearance_ = cfg.arm_clearance;
   cfg.request_timeout = get_parameter("request_timeout").as_double();
   plan_timeout_ = get_parameter("plan_timeout").as_double();
   map_frame_ = get_parameter("map_frame").as_string();
@@ -98,6 +102,11 @@ CrouchCoordinatorNode::CallbackReturn CrouchCoordinatorNode::on_configure(
       std::lock_guard<std::mutex> lock(mutex_);
       crouch_cells_ = std::move(cells);
     });
+  costmap_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/local_costmap/costmap", latched, [this](nav_msgs::msg::OccupancyGrid::SharedPtr m) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      local_costmap_ = std::move(m);
+    });
   posture_sub_ = create_subscription<std_msgs::msg::String>(
     "/a7/posture", latched, [this](std_msgs::msg::String::SharedPtr m) {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -135,6 +144,7 @@ CrouchCoordinatorNode::CallbackReturn CrouchCoordinatorNode::on_cleanup(
   timer_.reset();
   plan_sub_.reset();
   cells_sub_.reset();
+  costmap_sub_.reset();
   posture_sub_.reset();
   check_sub_.reset();
   go_low_client_.reset();
@@ -154,6 +164,51 @@ std::optional<Point2> CrouchCoordinatorNode::robotInMap()
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000, "no robot pose: %s", e.what());
     return std::nullopt;
   }
+}
+
+bool CrouchCoordinatorNode::obstacleNear()
+{
+  nav_msgs::msg::OccupancyGrid::SharedPtr grid;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    grid = local_costmap_;
+  }
+  if (!grid) {
+    return true;  // no costmap yet: assume the worst, keep the arm still
+  }
+  double rx = 0.0;
+  double ry = 0.0;
+  try {
+    const auto t = tf_buffer_->lookupTransform(
+      grid->header.frame_id, base_frame_, tf2::TimePointZero);
+    rx = t.transform.translation.x;
+    ry = t.transform.translation.y;
+  } catch (const tf2::TransformException &) {
+    return true;
+  }
+  const auto & info = grid->info;
+  const double res = info.resolution;
+  const int ci = static_cast<int>(std::floor((rx - info.origin.position.x) / res));
+  const int cj = static_cast<int>(std::floor((ry - info.origin.position.y) / res));
+  const int reach = static_cast<int>(std::ceil(arm_clearance_ / res));
+  for (int j = cj - reach; j <= cj + reach; ++j) {
+    for (int i = ci - reach; i <= ci + reach; ++i) {
+      if (i < 0 || j < 0 || i >= static_cast<int>(info.width) ||
+        j >= static_cast<int>(info.height))
+      {
+        continue;
+      }
+      const double wx = info.origin.position.x + (i + 0.5) * res;
+      const double wy = info.origin.position.y + (j + 0.5) * res;
+      // 100 = lethal in Nav2's costmap-to-OccupancyGrid translation.
+      if (std::hypot(wx - rx, wy - ry) <= arm_clearance_ &&
+        grid->data[static_cast<std::size_t>(j) * info.width + i] >= 100)
+      {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 void CrouchCoordinatorNode::onStandCheck(const std::string & verdict)
@@ -213,6 +268,7 @@ void CrouchCoordinatorNode::onTimer()
   if (!robot) {
     return;
   }
+  const bool near = obstacleNear();
   CrouchDecision d;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -221,7 +277,7 @@ void CrouchCoordinatorNode::onTimer()
     const std::vector<Point2> no_path;
     const double t = steady_.now().seconds();
     d = planner_->update(
-      t, parsePosture(posture_), *robot, navigating ? path_ : no_path, crouch_cells_);
+      t, parsePosture(posture_), *robot, navigating ? path_ : no_path, crouch_cells_, near);
     if (d.action == CrouchAction::kStand) {
       stand_pending_ = true;
     }

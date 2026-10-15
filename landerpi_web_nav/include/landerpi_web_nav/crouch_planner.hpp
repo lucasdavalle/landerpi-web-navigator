@@ -34,6 +34,9 @@ struct CrouchPlannerConfig
   double corridor = 0.15;        // m: a crouchable cell this close to the path is "on it"
   double near_radius = 0.5;      // m: crouchable cells this close keep the robot crouched
   double retry_distance = 0.3;   // m to move before trying to stand again after a "no"
+  // m: no standing up with an obstacle this close: the look-up gesture moves
+  // the arm, and in the first 6c demo it brushed a wardrobe door.
+  double arm_clearance = 0.45;
   double request_timeout = 3.0;  // s for posture_manager to start acting on a request
 };
 
@@ -67,6 +70,7 @@ struct CrouchDecision
 //   under) lie on the next `lookahead` metres of the plan: crouch.
 // - Crouched, with no crouchable cell within `near_radius` of the robot nor
 //   on the path ahead: try to stand (posture_manager looks up first).
+// - Not with an obstacle within arm_clearance: moving the arm could hit it.
 // - After a "no" from that check (blocked or unknown above), do not try
 //   again until the robot has moved `retry_distance`.
 // It acts only while there is a plan (a navigation in progress): it never
@@ -77,9 +81,11 @@ public:
   // Throws std::invalid_argument on non-positive distances or timeout.
   explicit CrouchPlanner(const CrouchPlannerConfig & config);
 
+  // `obstacle_near`: something the robot would hit (a lethal costmap cell)
+  // within arm_clearance of it.
   CrouchDecision update(
     double t, ArmPosture posture, const Point2 & robot, const std::vector<Point2> & path,
-    const std::vector<Point2> & crouch_cells);
+    const std::vector<Point2> & crouch_cells, bool obstacle_near = false);
 
   // posture_manager looked up and said no, with the robot at `where`.
   void standRefused(const Point2 & where);

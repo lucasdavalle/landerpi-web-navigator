@@ -166,6 +166,20 @@ TEST(CrouchPlanner, DoesNothingWithoutANavigation)
     CrouchAction::kNone);
 }
 
+// First 6c demo: crouched next to a wardrobe door, the look-up gesture
+// brushed it. With an obstacle that close it does not move the arm.
+TEST(CrouchPlanner, DoesNotStandUpNextToAnObstacle)
+{
+  CrouchPlanner p(CrouchPlannerConfig{});
+  const std::vector<Point2> none;
+  EXPECT_EQ(
+    p.update(0.0, ArmPosture::kLow, {1.8, 0}, straightPath(1.8, 3.0), none, true).action,
+    CrouchAction::kNone);
+  EXPECT_EQ(
+    p.update(1.0, ArmPosture::kLow, {1.8, 0}, straightPath(1.8, 3.0), none, false).action,
+    CrouchAction::kStand);
+}
+
 TEST(CrouchPlanner, RejectsBadConfig)
 {
   CrouchPlannerConfig bad;
