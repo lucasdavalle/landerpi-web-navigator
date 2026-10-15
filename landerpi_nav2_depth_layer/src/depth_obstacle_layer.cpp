@@ -133,6 +133,8 @@ void DepthObstacleLayer::onInitialize()
   publish_crouch_cells_ = param("publish_crouch_cells", rclcpp::ParameterValue(false)).as_bool();
   const auto crouch_topic = param(
     "crouch_cells_topic", rclcpp::ParameterValue(std::string("/a7/crouch_cells"))).as_string();
+  const auto grid_topic = param(
+    "depth_grid_topic", rclcpp::ParameterValue(std::string("/a7/depth_grid"))).as_string();
   crouch_cells_rate_ = param("crouch_cells_rate", rclcpp::ParameterValue(1.0)).as_double();
   if (!(rate_hz_ > 0.0 && rate_hz_ <= 30.0) || projection_.stride < 1 || !(floor_cell_ > 0.0) ||
     !(crouch_cells_rate_ > 0.0))
@@ -160,6 +162,8 @@ void DepthObstacleLayer::onInitialize()
   if (publish_crouch_cells_) {
     crouch_pub_ = node->create_publisher<sensor_msgs::msg::PointCloud2>(
       crouch_topic, rclcpp::QoS(1).reliable().transient_local());
+    grid_pub_ = node->create_publisher<nav_msgs::msg::OccupancyGrid>(
+      grid_topic, rclcpp::QoS(1).reliable().transient_local());
   }
 
   if (cloud_input_) {
@@ -423,11 +427,27 @@ void DepthObstacleLayer::updateCosts(
 
 void DepthObstacleLayer::publishCrouchCells()
 {
-  // Cell centres in the global frame (map), for crouch_coordinator.
+  // Cell centres in the global frame (map), for crouch_coordinator, and
+  // the whole grid for the web (50 crouchable, 100 obstacle, 0 nothing).
+  nav_msgs::msg::OccupancyGrid grid;
+  grid.header.frame_id = layered_costmap_->getGlobalFrameID();
+  grid.header.stamp = clock_->now();
+  grid.info.resolution = static_cast<float>(resolution_);
+  grid.info.width = size_x_;
+  grid.info.height = size_y_;
+  grid.info.origin.position.x = origin_x_;
+  grid.info.origin.position.y = origin_y_;
+  grid.info.origin.orientation.w = 1.0;
+  grid.data.assign(static_cast<std::size_t>(size_x_) * size_y_, 0);
   std::vector<Eigen::Vector3d> cells;
   for (unsigned int j = 0; j < size_y_; ++j) {
     for (unsigned int i = 0; i < size_x_; ++i) {
-      if (costmap_[getIndex(i, j)] == kCrouchCell) {
+      const unsigned char v = costmap_[getIndex(i, j)];
+      if (v == kLethalCell) {
+        grid.data[getIndex(i, j)] = 100;
+      }
+      if (v == kCrouchCell) {
+        grid.data[getIndex(i, j)] = 50;
         double wx = 0.0;
         double wy = 0.0;
         mapToWorld(i, j, wx, wy);
@@ -436,6 +456,7 @@ void DepthObstacleLayer::publishCrouchCells()
     }
   }
   crouch_pub_->publish(toMsg(cells, layered_costmap_->getGlobalFrameID(), clock_->now()));
+  grid_pub_->publish(grid);
 }
 
 // Nav2's recoveries clear the costmaps entirely (Humble resets every layer,

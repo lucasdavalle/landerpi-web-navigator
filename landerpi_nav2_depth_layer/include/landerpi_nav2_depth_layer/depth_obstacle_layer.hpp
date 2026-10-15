@@ -27,6 +27,7 @@
 #include "landerpi_nav2_depth_layer/height_classifier.hpp"
 #include "nav2_costmap_2d/costmap_layer.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -59,7 +60,8 @@ namespace landerpi_nav2_depth_layer
 // - the obstacles the robot would hit in its current posture
 //   (`obstacle_cloud_topic`), for the Collision Monitor.
 // With `publish_crouch_cells` (the global costmap) it publishes the
-// crouchable cells in the map, for crouch_coordinator.
+// crouchable cells in the map, for crouch_coordinator, and the whole grid
+// (/a7/depth_grid: 50 crouchable, 100 obstacle) for the web.
 class DepthObstacleLayer : public nav2_costmap_2d::CostmapLayer
 {
 public:
@@ -136,6 +138,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr frame_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr obstacle_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr crouch_pub_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr grid_pub_;
   rclcpp::Clock::SharedPtr clock_;
   rclcpp::Logger logger_{rclcpp::get_logger("depth_obstacle_layer")};
 };

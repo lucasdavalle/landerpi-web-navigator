@@ -117,6 +117,7 @@ PostureManagerNode::CallbackReturn PostureManagerNode::on_configure(const rclcpp
   height_pub_ = create_publisher<std_msgs::msg::Float32>("/a7/robot_height", latched);
   state_pub_ = create_publisher<std_msgs::msg::String>("/a7/posture", latched);
   check_pub_ = create_publisher<std_msgs::msg::String>("/a7/stand_check", latched);
+  target_pub_ = create_publisher<std_msgs::msg::String>("/a7/arm_target", latched);
   local_fp_pub_ = create_publisher<geometry_msgs::msg::Polygon>(
     "/local_costmap/footprint", rclcpp::QoS(1).reliable());
   global_fp_pub_ = create_publisher<geometry_msgs::msg::Polygon>(
@@ -179,6 +180,13 @@ PostureManagerNode::CallbackReturn PostureManagerNode::on_cleanup(const rclcpp_l
   return CallbackReturn::SUCCESS;
 }
 
+void PostureManagerNode::publishTarget(const std::string & target)
+{
+  std_msgs::msg::String s;
+  s.data = target;
+  target_pub_->publish(s);
+}
+
 void PostureManagerNode::publishState(const std::string & state)
 {
   std_msgs::msg::String s;
@@ -230,6 +238,7 @@ bool PostureManagerNode::tryStand(std::string & message)
   std_msgs::msg::Float32 h;
   h.data = static_cast<float>(postures_.at("low").height);
   height_pub_->publish(h);
+  publishTarget("look_up");
   publishState("looking_up");
   sendPulses(look_up_pulses_);
   RCLCPP_INFO(get_logger(), "turning the camera up to check the room above");
@@ -250,6 +259,7 @@ void PostureManagerNode::startMove(const std::string & name)
   std_msgs::msg::Float32 h;
   h.data = static_cast<float>(std::max(p.height, postures_.at("high").height));
   height_pub_->publish(h);
+  publishTarget(name);
   publishState("moving");
   sendPulses(p.pulses);
   RCLCPP_INFO(get_logger(), "moving the arm to '%s'", name.c_str());

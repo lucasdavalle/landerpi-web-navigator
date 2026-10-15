@@ -91,6 +91,7 @@ private:
   struct Snapshot
   {
     std::optional<std::vector<uint8_t>> map_frame;  // encoded once per map
+    std::optional<std::vector<uint8_t>> depth_frame;  // the camera's grid (6c)
     std::optional<MapMessage> map_info;              // without cells
     std::string walls_json = R"({"type":"walls","segments":[]})";
     std::optional<std::string> pose_json;
@@ -133,12 +134,19 @@ private:
   void onPlan(nav_msgs::msg::Path::SharedPtr msg);
   void stopTeleop();
   std::string driveStateJson();
+  std::string driveJsonLocked() const;  // caller holds mutex_
+  void onDepthGrid(nav_msgs::msg::OccupancyGrid::SharedPtr msg);
 
   std::mutex mutex_;
   Snapshot snap_;
   DriveArbiter arbiter_;        // guarded by mutex_
   std::string gate_reason_ = "unknown";  // guarded by mutex_
   std::string posture_ = "unknown";      // guarded by mutex_ (posture_manager state)
+  // Stage 6c, guarded by mutex_: where the arm is going, the last look-up
+  // verdict and what crouch_coordinator is doing (for the web's overlays).
+  std::string arm_target_;
+  std::string stand_check_;
+  std::string crouch_status_;
   bool pending_enable_ = false;          // guarded by mutex_
 
   // Navigation state shown in the browser, guarded by mutex_.
@@ -177,6 +185,10 @@ private:
   rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr battery_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr gate_status_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr posture_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr arm_target_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr stand_check_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr crouch_status_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr depth_grid_sub_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stand_client_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr plan_sub_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;

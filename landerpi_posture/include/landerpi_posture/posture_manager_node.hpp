@@ -55,7 +55,8 @@ namespace landerpi_posture
 // turns the camera up (the look-up pose, lower than the low posture), and
 // on the next depth image checkClearance decides: clear -> high, blocked
 // or unknown -> back to low. The verdict goes on /a7/stand_check (String,
-// transient local).
+// transient local). /a7/arm_target (String, transient local) says where
+// each arm move is going: high, low or look_up (the web animates it).
 // Activating the node moves nothing: the arm moves only when asked.
 class PostureManagerNode : public rclcpp_lifecycle::LifecycleNode
 {
@@ -109,6 +110,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr height_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr check_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr target_pub_;
+  void publishTarget(const std::string & target);
   rclcpp::Publisher<geometry_msgs::msg::Polygon>::SharedPtr local_fp_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Polygon>::SharedPtr global_fp_pub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;

@@ -102,6 +102,24 @@ TEST(MessageCodec, MapRoundTrip)
   EXPECT_EQ(back.cells, m.cells);
 }
 
+// Stage 6c: the camera's grid (crouchable / camera-only obstacles) travels
+// like the map, with its own type so the browser draws it as an overlay.
+TEST(MessageCodec, DepthGridRoundTripAndTypeCheck)
+{
+  MapMessage m;
+  m.width = 2;
+  m.height = 2;
+  m.resolution = 0.05f;
+  m.cells = {0, 50, 100, 0};
+  const auto frame = codec::encodeMap(m, landerpi_web_nav::BinaryType::kDepthGrid);
+  EXPECT_EQ(frame[0], 3);
+  const auto back = codec::decodeMap(frame, landerpi_web_nav::BinaryType::kDepthGrid);
+  EXPECT_EQ(back.cells, m.cells);
+  EXPECT_THROW(codec::decodeMap(frame), std::invalid_argument);  // not a map frame
+  EXPECT_THROW(
+    codec::encodeMap(m, landerpi_web_nav::BinaryType::kScan), std::invalid_argument);
+}
+
 TEST(MessageCodec, MapIsLittleEndian)
 {
   MapMessage m;

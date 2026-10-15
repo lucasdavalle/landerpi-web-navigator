@@ -175,14 +175,17 @@ std::string errorJson(const std::string & message)
   return json{{"type", "error"}, {"message", message}}.dump();
 }
 
-std::vector<uint8_t> encodeMap(const MapMessage & m)
+std::vector<uint8_t> encodeMap(const MapMessage & m, BinaryType type)
 {
+  if (type != BinaryType::kMap && type != BinaryType::kDepthGrid) {
+    throw std::invalid_argument("not a grid frame type");
+  }
   if (m.cells.size() != static_cast<std::size_t>(m.width) * m.height) {
     throw std::invalid_argument("map cells do not match width * height");
   }
   std::vector<uint8_t> out;
   out.reserve(24 + m.cells.size());
-  putPreamble(out, BinaryType::kMap);
+  putPreamble(out, type);
   putU32(out, m.width);
   putU32(out, m.height);
   putF32(out, m.resolution);
@@ -210,10 +213,10 @@ std::vector<uint8_t> encodeScan(const ScanMessage & m)
   return out;
 }
 
-MapMessage decodeMap(const std::vector<uint8_t> & frame)
+MapMessage decodeMap(const std::vector<uint8_t> & frame, BinaryType type)
 {
   Reader r(frame);
-  r.expectPreamble(BinaryType::kMap);
+  r.expectPreamble(type);
   MapMessage m;
   m.width = r.u32();
   m.height = r.u32();

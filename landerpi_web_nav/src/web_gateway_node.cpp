@@ -219,6 +219,30 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
       std::lock_guard<std::mutex> lock(mutex_);
       snap_.battery_mv = m->data;
     });
+  // Stage 6c: the arm's target, the look-up verdict and the coordinator's
+  // status go to the browser with the drive state (overlays, status bar),
+  // and the camera's grid as its own binary frame.
+  const auto latched = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+  auto text_field = [this](std::string WebGatewayNode::* field) {
+      return [this, field](std_msgs::msg::String::SharedPtr m) {
+               {
+                 std::lock_guard<std::mutex> lock(mutex_);
+                 this->*field = m->data;
+               }
+               if (server_) {
+                 server_->broadcast(WsFrame{false, driveStateJson(), {}});
+               }
+             };
+    };
+  arm_target_sub_ = create_subscription<std_msgs::msg::String>(
+    "/a7/arm_target", latched, text_field(&WebGatewayNode::arm_target_));
+  stand_check_sub_ = create_subscription<std_msgs::msg::String>(
+    "/a7/stand_check", latched, text_field(&WebGatewayNode::stand_check_));
+  crouch_status_sub_ = create_subscription<std_msgs::msg::String>(
+    "/a7/crouch_status", latched, text_field(&WebGatewayNode::crouch_status_));
+  depth_grid_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/a7/depth_grid", latched,
+    [this](nav_msgs::msg::OccupancyGrid::SharedPtr m) {onDepthGrid(std::move(m));});
 
   RCLCPP_INFO(
     get_logger(), "configured (password from %s)",
@@ -298,6 +322,10 @@ void WebGatewayNode::releaseAll()
   battery_sub_.reset();
   gate_status_sub_.reset();
   posture_sub_.reset();
+  arm_target_sub_.reset();
+  stand_check_sub_.reset();
+  crouch_status_sub_.reset();
+  depth_grid_sub_.reset();
   stand_client_.reset();
   plan_sub_.reset();
   nav_client_.reset();
@@ -329,6 +357,25 @@ void WebGatewayNode::onMap(nav_msgs::msg::OccupancyGrid::SharedPtr msg)
     snap_.map_frame = frame;
     snap_.map_info = m;
     snap_.last_map = now();
+  }
+  if (server_) {
+    server_->broadcast(WsFrame{true, {}, std::move(frame)});
+  }
+}
+
+void WebGatewayNode::onDepthGrid(nav_msgs::msg::OccupancyGrid::SharedPtr msg)
+{
+  MapMessage m;
+  m.width = msg->info.width;
+  m.height = msg->info.height;
+  m.resolution = static_cast<float>(msg->info.resolution);
+  m.origin_x = static_cast<float>(msg->info.origin.position.x);
+  m.origin_y = static_cast<float>(msg->info.origin.position.y);
+  m.cells = msg->data;
+  auto frame = codec::encodeMap(m, BinaryType::kDepthGrid);
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    snap_.depth_frame = frame;
   }
   if (server_) {
     server_->broadcast(WsFrame{true, {}, std::move(frame)});
@@ -474,12 +521,20 @@ void WebGatewayNode::publishStatus()
 std::string WebGatewayNode::driveStateJson()
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  return driveJsonLocked();
+}
+
+std::string WebGatewayNode::driveJsonLocked() const
+{
   const auto driver = arbiter_.driver();
   return json{
     {"type", "drive"},
     {"driver", driver ? json(*driver) : json(nullptr)},
     {"gate", gate_reason_},
     {"posture", posture_},
+    {"arm_target", arm_target_},
+    {"stand_check", stand_check_},
+    {"crouch_status", crouch_status_},
   }.dump();
 }
 
@@ -828,13 +883,10 @@ std::vector<WsFrame> WebGatewayNode::initialFrames()
     out.push_back(WsFrame{false, *snap_.pose_json, {}});
   }
   out.push_back(WsFrame{false, navJsonLocked(), {}});
-  const auto driver = arbiter_.driver();
-  out.push_back(
-    WsFrame{false, json{
-        {"type", "drive"},
-        {"driver", driver ? json(*driver) : json(nullptr)},
-        {"gate", gate_reason_},
-        {"posture", posture_}}.dump(), {}});
+  out.push_back(WsFrame{false, driveJsonLocked(), {}});
+  if (snap_.depth_frame) {
+    out.push_back(WsFrame{true, {}, *snap_.depth_frame});
+  }
   return out;
 }
 

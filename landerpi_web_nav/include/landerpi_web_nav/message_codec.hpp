@@ -36,6 +36,9 @@ namespace landerpi_web_nav
 //                f32 origin_y, then width*height int8 cells (row 0 = lowest y)
 // Scan (type 2): u32 count, f32 robot_x, f32 robot_y, f32 robot_yaw,
 //                then count * (f32 x, f32 y) points in the map frame
+// Depth grid (type 3, stage 6c): same layout as the map; cells 0 nothing,
+//                50 crouchable (passable only crouched), 100 an obstacle
+//                only the camera sees
 
 constexpr uint8_t kBinaryVersion = 1;
 
@@ -43,6 +46,7 @@ enum class BinaryType : uint8_t
 {
   kMap = 1,
   kScan = 2,
+  kDepthGrid = 3,
 };
 
 struct Pose2D
@@ -101,11 +105,13 @@ std::string statusJson(const StatusMessage & m);
 std::string mapInfoJson(const MapMessage & m);  // metadata only, no cells
 std::string errorJson(const std::string & message);
 
-std::vector<uint8_t> encodeMap(const MapMessage & m);
+// `type` kMap or kDepthGrid: both are grids with the same layout.
+std::vector<uint8_t> encodeMap(const MapMessage & m, BinaryType type = BinaryType::kMap);
 std::vector<uint8_t> encodeScan(const ScanMessage & m);
 // Inverses, for tests and debugging tools. Throw std::invalid_argument on a
 // truncated or foreign frame.
-MapMessage decodeMap(const std::vector<uint8_t> & frame);
+MapMessage decodeMap(
+  const std::vector<uint8_t> & frame, BinaryType type = BinaryType::kMap);
 ScanMessage decodeScan(const std::vector<uint8_t> & frame);
 
 }  // namespace codec
