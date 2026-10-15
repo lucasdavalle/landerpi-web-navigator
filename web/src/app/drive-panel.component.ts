@@ -21,6 +21,7 @@ import { TeleopService } from './teleop.service';
     }
 
     <p class="gate">Estado: <b [class]="gateClass()">{{ gateText() }}</b></p>
+    <p class="gate">Brazo: <b>{{ postureText() }}</b></p>
 
     <h2>Navegación</h2>
     <p class="gate">{{ navText() }}
@@ -84,6 +85,15 @@ export class DrivePanelComponent {
   readonly gateClass = computed(() => {
     const g = this.socket.drive().gate;
     return g === 'teleop' || g === 'nav' ? 'ok' : g === 'no_heartbeat' || g === 'unknown' ? 'bad' : 'warn';
+  });
+
+  private readonly postureTexts: Record<string, string> = {
+    none: 'sin postura', moving: 'moviéndose…', calibrating: 'calibrando cámara…',
+    high: 'alto (navegación)', low: 'agachado', unknown: 'sin datos',
+  };
+  readonly postureText = computed(() => {
+    const p = this.socket.drive().posture ?? 'unknown';
+    return this.postureTexts[p] ?? p;
   });
 
   private readonly navTexts: Record<string, string> = {

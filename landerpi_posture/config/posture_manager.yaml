@@ -21,13 +21,15 @@ posture_manager:
         cam_roll: 0.049
         calibrated: true
       low:
-        # Arm forward and horizontal: 20 cm tall, sticks out 23 cm in front.
+        # Arm forward and horizontal: measured 20 cm, but the floor fit puts the
+        # camera centre at 19.8 cm, so its top is higher: declared 22 cm.
+        # Sticks out 23 cm in front.
         pulses: [500, 160, 500, 500, 500]
-        height: 0.20
+        height: 0.22
         front: 0.34
         back: -0.11
         half_width: 0.09
-        cam_height: 0.15        # ROUGH estimate, not calibrated yet
-        cam_pitch: 0.0
-        cam_roll: 0.0
-        calibrated: false
+        cam_height: 0.198       # floor fit 2026-10-15: 19.8 cm, pitch 4.6 deg, roll 5.5 deg
+        cam_pitch: 0.080
+        cam_roll: 0.096
+        calibrated: true

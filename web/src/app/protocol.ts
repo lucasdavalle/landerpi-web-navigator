@@ -24,6 +24,7 @@ export interface Status {
 export interface DriveState {
   driver: number | null;  // client id of whoever is driving
   gate: string;           // velocity_gate reason: idle, no_heartbeat, teleop...
+  posture?: string;       // arm: none, moving, calibrating, high, low (stage 6)
 }
 
 export interface NavState {

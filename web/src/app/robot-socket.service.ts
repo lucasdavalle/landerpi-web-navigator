@@ -124,7 +124,7 @@ export class RobotSocket {
         this.status.set(msg as Status);
         break;
       case 'drive':
-        this.drive.set({ driver: msg.driver, gate: msg.gate });
+        this.drive.set({ driver: msg.driver, gate: msg.gate, posture: msg.posture });
         break;
       case 'nav':
         this.nav.set(msg as NavState);

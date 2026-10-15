@@ -191,6 +191,28 @@ WebGatewayNode::CallbackReturn WebGatewayNode::on_configure(const rclcpp_lifecyc
   plan_sub_ = create_subscription<nav_msgs::msg::Path>(
     "/plan", rclcpp::QoS(rclcpp::KeepLast(1)).reliable(),
     [this](nav_msgs::msg::Path::SharedPtr m) {onPlan(std::move(m));});
+  // Arm posture (stage 6): latched state from posture_manager.
+  go_high_client_ = create_client<std_srvs::srv::Trigger>("/posture_manager/go_high");
+  posture_sub_ = create_subscription<std_msgs::msg::String>(
+    "/a7/posture", rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
+    [this](std_msgs::msg::String::SharedPtr m) {
+      bool enable_now = false;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        posture_ = m->data;
+        if (pending_enable_ && posture_ == "high") {
+          pending_enable_ = false;
+          enable_now = arbiter_.driver().has_value();
+        }
+      }
+      if (enable_now) {
+        RCLCPP_INFO(get_logger(), "arm in the high posture: enabling motion");
+        applyDriveAction(DriveArbiter::Action::kEnable);
+      }
+      if (server_) {
+        server_->broadcast(WsFrame{false, driveStateJson(), {}});
+      }
+    });
   battery_sub_ = create_subscription<std_msgs::msg::UInt16>(
     "/ros_robot_controller/battery", rclcpp::QoS(rclcpp::KeepLast(5)).reliable(),
     [this](std_msgs::msg::UInt16::SharedPtr m) {
@@ -275,6 +297,8 @@ void WebGatewayNode::releaseAll()
   odom_sub_.reset();
   battery_sub_.reset();
   gate_status_sub_.reset();
+  posture_sub_.reset();
+  go_high_client_.reset();
   plan_sub_.reset();
   nav_client_.reset();
   teleop_pub_.reset();
@@ -455,6 +479,7 @@ std::string WebGatewayNode::driveStateJson()
     {"type", "drive"},
     {"driver", driver ? json(*driver) : json(nullptr)},
     {"gate", gate_reason_},
+    {"posture", posture_},
   }.dump();
 }
 
@@ -482,6 +507,39 @@ void WebGatewayNode::applyDriveAction(DriveArbiter::Action action)
         RCLCPP_WARN(get_logger(), "set_running(%d) refused: %s", enable, res->message.c_str());
       }
     });
+}
+
+void WebGatewayNode::enableAfterPosture()
+{
+  bool already_high = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    already_high = posture_ == "high";
+    pending_enable_ = !already_high;
+  }
+  if (already_high) {
+    applyDriveAction(DriveArbiter::Action::kEnable);
+    return;
+  }
+  if (!go_high_client_ || !go_high_client_->service_is_ready()) {
+    // Without posture_manager (older setups) drive as before, but say so.
+    RCLCPP_WARN(get_logger(), "posture_manager not available: enabling without a posture");
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      pending_enable_ = false;
+    }
+    applyDriveAction(DriveArbiter::Action::kEnable);
+    return;
+  }
+  RCLCPP_INFO(get_logger(), "raising the arm to the high posture before enabling motion");
+  go_high_client_->async_send_request(
+    std::make_shared<std_srvs::srv::Trigger::Request>(),
+    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture f) {
+      if (!f.get()->success) {
+        RCLCPP_WARN(get_logger(), "go_high refused: %s", f.get()->message.c_str());
+      }
+    });
+  // The gate is enabled from posture_sub_ once /a7/posture says "high".
 }
 
 void WebGatewayNode::stopTeleop()
@@ -518,8 +576,16 @@ void WebGatewayNode::handleWsMessage(WsClientId client, const nlohmann::json & m
         get_logger(), "client %lu %s driving", static_cast<unsigned long>(client),  // NOLINT
         msg.value("enable", false) ? "is now" : "stopped");
     }
-    applyDriveAction(d.action);
+    if (d.action == DriveArbiter::Action::kEnable) {
+      enableAfterPosture();
+    } else {
+      applyDriveAction(d.action);
+    }
     if (d.action == DriveArbiter::Action::kDisable) {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pending_enable_ = false;
+      }
       cancelGoal("driver handed back control");
     }
     server_->broadcast(WsFrame{false, driveStateJson(), {}});
@@ -730,6 +796,10 @@ void WebGatewayNode::onWsClosed(WsClientId client)
   if (action != DriveArbiter::Action::kNone) {
     RCLCPP_WARN(
       get_logger(), "driver %lu disconnected: stopping", static_cast<unsigned long>(client));  // NOLINT
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      pending_enable_ = false;
+    }
     applyDriveAction(action);
     cancelGoal("driver disconnected");
     if (server_) {
@@ -760,7 +830,8 @@ std::vector<WsFrame> WebGatewayNode::initialFrames()
     WsFrame{false, json{
         {"type", "drive"},
         {"driver", driver ? json(*driver) : json(nullptr)},
-        {"gate", gate_reason_}}.dump(), {}});
+        {"gate", gate_reason_},
+        {"posture", posture_}}.dump(), {}});
   return out;
 }
 
