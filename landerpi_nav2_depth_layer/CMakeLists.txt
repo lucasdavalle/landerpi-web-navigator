@@ -21,7 +21,8 @@ add_library(depth_geometry
   src/depth_projector.cpp
   src/floor_calibrator.cpp
   src/height_classifier.cpp
-  src/observation_cloud.cpp)
+  src/observation_cloud.cpp
+  src/clearance_check.cpp)
 target_include_directories(depth_geometry PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)

@@ -200,7 +200,10 @@ local_costmap:
         min_range: 0.25
         max_range: 3.0
         floor_band: 0.015
-        height_margin: 0.05
+        crouch_height: 0.20                 # arm low, measured (stage 6c)
+        crouch_margin: 0.02
+        stand_height: 0.31                  # arm high
+        stand_margin: 0.05                  # bed edge at the top of the image, noisy
         obstacle_max_range: 2.5
         default_robot_height: 0.31
         body_x_min: -0.13

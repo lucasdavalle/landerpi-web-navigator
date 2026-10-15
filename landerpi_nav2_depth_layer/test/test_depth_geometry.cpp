@@ -22,18 +22,22 @@
 
 #include "Eigen/Geometry"
 
+#include "landerpi_nav2_depth_layer/clearance_check.hpp"
 #include "landerpi_nav2_depth_layer/depth_projector.hpp"
 #include "landerpi_nav2_depth_layer/floor_calibrator.hpp"
 #include "landerpi_nav2_depth_layer/height_classifier.hpp"
 #include "landerpi_nav2_depth_layer/observation_cloud.hpp"
 
 using landerpi_nav2_depth_layer::CameraMount;
+using landerpi_nav2_depth_layer::Clearance;
+using landerpi_nav2_depth_layer::ClearanceConfig;
 using landerpi_nav2_depth_layer::Classified;
 using landerpi_nav2_depth_layer::FloorFitConfig;
 using landerpi_nav2_depth_layer::Intrinsics;
 using landerpi_nav2_depth_layer::ProjectionConfig;
 using landerpi_nav2_depth_layer::RobotEnvelope;
 using landerpi_nav2_depth_layer::bodyFromOptical;
+using landerpi_nav2_depth_layer::checkClearance;
 using landerpi_nav2_depth_layer::classify;
 using landerpi_nav2_depth_layer::fitFloor;
 using landerpi_nav2_depth_layer::fromCloudPoints;
@@ -184,18 +188,20 @@ TEST(FloorCalibrator, NoFloorNoFit)
 
 TEST(HeightClassifier, SortsPointsByWhatTheyMeanForTheRobot)
 {
-  RobotEnvelope robot;  // 1.5 cm floor band, 31 cm tall, 5 cm margin
+  RobotEnvelope robot;  // floor 1.5 cm, crouched top 22 cm, standing top 36 cm
   const std::vector<Eigen::Vector3d> pts{
     {0.8, 0.0, 0.005},   // floor
     {0.8, 0.1, 0.05},    // a shoe: lower than the lidar (9 cm), the robot would hit it
-    {0.9, 0.0, 0.28},    // a table edge just under the robot's height
-    {0.9, 0.0, 0.40},    // a table top higher than robot + margin: passes under
+    {0.9, 0.0, 0.18},    // a shelf at 18 cm: too low even crouched
+    {0.9, 0.1, 0.28},    // a table edge at 28 cm: passes only crouched
+    {0.9, 0.0, 0.40},    // a table top higher than standing + margin: passes under
     {0.10, 0.0, 0.20},   // the robot's own arm
     {3.5, 0.0, 0.10},    // too far
   };
   const auto c = classify(pts, robot);
   EXPECT_EQ(c.floor.size(), 1u);
   EXPECT_EQ(c.obstacles.size(), 2u);
+  EXPECT_EQ(c.crouchable.size(), 1u);
   EXPECT_EQ(c.above, 1u);
   EXPECT_EQ(c.own_body, 1u);
   EXPECT_EQ(c.too_far, 1u);
@@ -210,34 +216,47 @@ TEST(HeightClassifier, ThreeCentimetreBoxIsAnObstacle)
   EXPECT_EQ(classify(box, robot).obstacles.size(), 2u);
 }
 
-// The bed edge the camera ran into: 30 cm, seen at the top of the image
-// with noise up to 33 cm, while the robot stands 31 cm tall.
-TEST(HeightClassifier, NoisyBedEdgeAtCameraHeightIsAnObstacle)
+// The bed (30 cm clearance) the camera ran into in the first 6b test, seen
+// at the top of the image with noise up to 33 cm: standing it would hit it
+// (the robot is 31 cm), crouched it passes.
+TEST(HeightClassifier, NoisyBedEdgeIsCrouchable)
 {
   RobotEnvelope robot;
   const std::vector<Eigen::Vector3d> bed_edge{{0.9, 0.0, 0.30}, {0.9, 0.0, 0.33}};
-  EXPECT_EQ(classify(bed_edge, robot).obstacles.size(), 2u);
+  const auto c = classify(bed_edge, robot);
+  EXPECT_EQ(c.crouchable.size(), 2u);
+  EXPECT_TRUE(c.obstacles.empty());
 }
 
-TEST(HeightClassifier, LowerPostureLetsMoreThroughUnder)
+// The class limits are the postures' heights plus their margins: 22 and
+// 36 cm. The user's point: something at 24 cm does let the crouched robot
+// (20 cm) through.
+TEST(HeightClassifier, LimitsAreEachPostureHeightPlusItsMargin)
 {
-  const std::vector<Eigen::Vector3d> bed_frame{{0.9, 0.0, 0.30}};  // the bed: 30 cm clearance
-  RobotEnvelope high;
-  high.height = 0.31;
-  RobotEnvelope low;
-  low.height = 0.22;  // + 5 cm margin = 27 cm, still under the bed
-  EXPECT_EQ(classify(bed_frame, high).obstacles.size(), 1u);  // standing: would hit it
-  EXPECT_EQ(classify(bed_frame, low).above, 1u);              // crouched: passes under
+  RobotEnvelope robot;
+  const std::vector<Eigen::Vector3d> pts{
+    {0.9, 0.0, 0.219},  // obstacle
+    {0.9, 0.0, 0.24},   // crouchable
+    {0.9, 0.0, 0.359},  // crouchable
+    {0.9, 0.0, 0.361},  // above
+  };
+  const auto c = classify(pts, robot);
+  EXPECT_EQ(c.obstacles.size(), 1u);
+  EXPECT_EQ(c.crouchable.size(), 2u);
+  EXPECT_EQ(c.above, 1u);
 }
 
 TEST(HeightClassifier, RejectsBadEnvelope)
 {
   RobotEnvelope bad;
-  bad.floor_band = 0.5;  // above the robot's height
+  bad.floor_band = 0.5;  // above the crouched height
   EXPECT_THROW(classify({}, bad), std::invalid_argument);
   RobotEnvelope negative_margin;
-  negative_margin.height_margin = -0.01;
+  negative_margin.stand_margin = -0.01;
   EXPECT_THROW(classify({}, negative_margin), std::invalid_argument);
+  RobotEnvelope crossed;
+  crossed.crouch_height = 0.40;  // crouched taller than standing
+  EXPECT_THROW(classify({}, crossed), std::invalid_argument);
 }
 
 // The global costmap's layer rebuilds the local layer's classification from
@@ -246,15 +265,18 @@ TEST(ObservationCloud, RoundTripKeepsObstaclesAndThinsTheFloor)
 {
   Classified c;
   c.obstacles = {{0.8, 0.0}, {0.82, 0.01}};
+  c.crouchable = {{1.2, 0.3}};
   for (int k = 0; k < 10; ++k) {
     c.floor.emplace_back(1.0 + 0.004 * k, 0.2);  // ten points inside one 5 cm cell
   }
   c.floor.emplace_back(1.5, -0.3);  // another cell
   const auto cloud = toCloudPoints(c, 0.05);
-  ASSERT_EQ(cloud.size(), 4u);
+  ASSERT_EQ(cloud.size(), 5u);
   const Classified back = fromCloudPoints(cloud);
   ASSERT_EQ(back.obstacles.size(), 2u);
   EXPECT_NEAR(back.obstacles[1].x(), 0.82, 1e-9);
+  ASSERT_EQ(back.crouchable.size(), 1u);
+  EXPECT_NEAR(back.crouchable[0].y(), 0.3, 1e-9);
   EXPECT_EQ(back.floor.size(), 2u);
 }
 
@@ -264,4 +286,68 @@ TEST(ObservationCloud, FloorCellsAreSeparatedOnBothSidesOfZero)
   c.floor = {{0.01, -0.01}, {0.01, 0.01}, {-0.01, 0.01}};  // three cells around the origin
   EXPECT_EQ(toCloudPoints(c, 0.05).size(), 3u);
   EXPECT_THROW(toCloudPoints(c, 0.0), std::invalid_argument);
+}
+
+// A look-up image: `valid` of the pixels read, and of those `near` read
+// 0.28 m (the bed's underside), the rest 2.4 m (the room's ceiling). Pixels
+// are drawn at random (fixed seed) so any stride samples the fractions.
+static std::vector<std::uint16_t> lookUpImage(double valid, double near)
+{
+  std::mt19937 rng(7);
+  std::uniform_real_distribution<double> u(0.0, 1.0);
+  std::vector<std::uint16_t> d(640 * 400, 0);
+  for (auto & px : d) {
+    if (u(rng) < valid) {
+      px = u(rng) < near ? 280 : 2400;
+    }
+  }
+  return d;
+}
+
+// The numbers measured in the room with the look-up pose (2026-10-15).
+TEST(ClearanceCheck, UnderTheBedIsBlocked)
+{
+  const auto r = checkClearance(lookUpImage(0.69, 0.98), 640, 400, ClearanceConfig{});
+  EXPECT_EQ(r.verdict, Clearance::kBlocked);
+  EXPECT_NEAR(r.valid_fraction, 0.69, 0.02);
+  EXPECT_NEAR(r.near_fraction, 0.98, 0.02);
+}
+
+TEST(ClearanceCheck, OpenRoomIsClear)
+{
+  EXPECT_EQ(
+    checkClearance(lookUpImage(0.60, 0.0), 640, 400, ClearanceConfig{}).verdict,
+    Clearance::kClear);
+}
+
+// The first look-up pose (27 cm) under the bed: the underside was too close
+// to measure and almost nothing read. No evidence is not "clear".
+TEST(ClearanceCheck, TooFewReadingsIsUnknown)
+{
+  EXPECT_EQ(
+    checkClearance(lookUpImage(0.02, 0.6), 640, 400, ClearanceConfig{}).verdict,
+    Clearance::kUnknown);
+  EXPECT_EQ(
+    checkClearance(lookUpImage(0.0, 0.0), 640, 400, ClearanceConfig{}).verdict,
+    Clearance::kUnknown);
+}
+
+// A little near noise (a cable, the edge of the arm) does not block.
+TEST(ClearanceCheck, FewNearReadingsStillClear)
+{
+  EXPECT_EQ(
+    checkClearance(lookUpImage(0.6, 0.03), 640, 400, ClearanceConfig{}).verdict,
+    Clearance::kClear);
+  EXPECT_EQ(
+    checkClearance(lookUpImage(0.6, 0.10), 640, 400, ClearanceConfig{}).verdict,
+    Clearance::kBlocked);
+}
+
+TEST(ClearanceCheck, RejectsBadInput)
+{
+  const std::vector<std::uint16_t> small(10, 0);
+  EXPECT_THROW(checkClearance(small, 640, 400, ClearanceConfig{}), std::invalid_argument);
+  ClearanceConfig bad;
+  bad.stride = 0;
+  EXPECT_THROW(checkClearance(lookUpImage(0.6, 0.0), 640, 400, bad), std::invalid_argument);
 }

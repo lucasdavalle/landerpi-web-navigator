@@ -30,9 +30,12 @@ std::vector<Eigen::Vector3d> toCloudPoints(const Classified & c, double floor_ce
     throw std::invalid_argument("floor_cell must be positive");
   }
   std::vector<Eigen::Vector3d> out;
-  out.reserve(c.obstacles.size() + c.floor.size() / 8);
+  out.reserve(c.obstacles.size() + c.crouchable.size() + c.floor.size() / 8);
   for (const auto & o : c.obstacles) {
     out.emplace_back(o.x(), o.y(), kObstacleZ);
+  }
+  for (const auto & o : c.crouchable) {
+    out.emplace_back(o.x(), o.y(), kCrouchableZ);
   }
   // One floor point per cell: the key packs the two cell indices (the
   // camera sees a few metres, far inside 32 bits each).
@@ -54,7 +57,9 @@ Classified fromCloudPoints(const std::vector<Eigen::Vector3d> & points)
     if (!p.allFinite()) {
       continue;
     }
-    if (p.z() > kObstacleZ / 2) {
+    if (p.z() > (kObstacleZ + kCrouchableZ) / 2) {
+      c.crouchable.emplace_back(p.x(), p.y());
+    } else if (p.z() > (kFloorZ + kObstacleZ) / 2) {
       c.obstacles.emplace_back(p.x(), p.y());
     } else {
       c.floor.emplace_back(p.x(), p.y());

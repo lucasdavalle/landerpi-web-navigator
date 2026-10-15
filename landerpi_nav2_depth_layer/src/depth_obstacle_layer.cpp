@@ -73,7 +73,10 @@ void DepthObstacleLayer::onInitialize()
   projection_.min_range = param("min_range", rclcpp::ParameterValue(0.25)).as_double();
   projection_.max_range = param("max_range", rclcpp::ParameterValue(3.0)).as_double();
   envelope_.floor_band = param("floor_band", rclcpp::ParameterValue(0.015)).as_double();
-  envelope_.height_margin = param("height_margin", rclcpp::ParameterValue(0.05)).as_double();
+  envelope_.crouch_height = param("crouch_height", rclcpp::ParameterValue(0.20)).as_double();
+  envelope_.crouch_margin = param("crouch_margin", rclcpp::ParameterValue(0.02)).as_double();
+  envelope_.stand_height = param("stand_height", rclcpp::ParameterValue(0.31)).as_double();
+  envelope_.stand_margin = param("stand_margin", rclcpp::ParameterValue(0.05)).as_double();
   envelope_.max_range = param("obstacle_max_range", rclcpp::ParameterValue(2.5)).as_double();
   robot_height_ = param("default_robot_height", rclcpp::ParameterValue(0.31)).as_double();
   envelope_.body_x_min = param("body_x_min", rclcpp::ParameterValue(-0.13)).as_double();
@@ -149,14 +152,12 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   }
 
   Intrinsics k;
-  RobotEnvelope envelope = envelope_;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!intrinsics_) {
       return;  // no camera_info yet
     }
     k = *intrinsics_;
-    envelope.height = robot_height_;
   }
   if (msg->encoding != "mono16" && msg->encoding != "16UC1") {
     RCLCPP_WARN_THROTTLE(
@@ -184,7 +185,7 @@ void DepthObstacleLayer::onImage(sensor_msgs::msg::Image::ConstSharedPtr msg)
   for (auto & p : points) {
     p = base_from_sensor * p;
   }
-  const Classified c = classify(points, envelope);
+  const Classified c = classify(points, envelope_);
 
   // The classified frame for the Collision Monitor and the global costmap.
   if (publish_cloud_) {
@@ -271,11 +272,24 @@ void DepthObstacleLayer::store(const Classified & c, const rclcpp::Time & stamp)
     return;
   }
 
+  // What only a crouched robot passes under blocks a standing one.
+  // TODO(stage 6c, step B): keep it as its own class in the grid.
+  bool standing = true;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    standing = robot_height_ > envelope_.crouch_height + 1e-3;
+  }
+
   Observation obs;
-  obs.obstacles.reserve(c.obstacles.size());
+  obs.obstacles.reserve(c.obstacles.size() + (standing ? c.crouchable.size() : 0));
   obs.floor.reserve(c.floor.size());
   for (const auto & o : c.obstacles) {
     obs.obstacles.push_back((global_from_base * Eigen::Vector3d(o.x(), o.y(), 0.0)).head<2>());
+  }
+  if (standing) {
+    for (const auto & o : c.crouchable) {
+      obs.obstacles.push_back((global_from_base * Eigen::Vector3d(o.x(), o.y(), 0.0)).head<2>());
+    }
   }
   for (const auto & f : c.floor) {
     obs.floor.push_back((global_from_base * Eigen::Vector3d(f.x(), f.y(), 0.0)).head<2>());

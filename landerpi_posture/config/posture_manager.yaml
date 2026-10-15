@@ -25,7 +25,7 @@ posture_manager:
         # camera centre at 19.8 cm, so its top is higher: declared 22 cm.
         # Sticks out 23 cm in front.
         pulses: [500, 160, 500, 500, 500]
-        height: 0.22
+        height: 0.20            # highest point, measured with a tape (stage 6c)
         front: 0.34
         back: -0.11
         half_width: 0.09
