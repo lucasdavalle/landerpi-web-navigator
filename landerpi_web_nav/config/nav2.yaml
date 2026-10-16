@@ -160,16 +160,21 @@ controller_server:
       PathDist.scale: 32.0
       GoalDist.scale: 24.0
     FollowPathCrouched:
-      # Crouched the robot is 45 cm long with the arm in front, and under a
-      # bed the only way out is backwards: the RotationShim (Humble) cannot
-      # reverse, it turns 180 deg in place and the arm hits whatever is
-      # beside (6c demo 2, stuck between slippers and a wall). DWB alone,
-      # slower, allowed to back up slowly; PreferForward keeps it going
-      # forward whenever it can. Behind the robot it is blind (the lidar's
-      # rear sector is cut): it relies on the costmap's memory.
-      plugin: "dwb_core::DWBLocalPlanner"
+      # Crouched the robot is 45 cm long with the arm in front. Same style
+      # as standing (user decision): turn towards the path, then go forward;
+      # slower. Reversing is NOT a driving mode: when turning would sweep
+      # the arm into something, the behaviour tree backs up 15 cm to make
+      # room and tries again (a7_navigate_to_pose.xml). A first version let
+      # DWB reverse (PreferForward): near obstacles it dithered at ~0 m/s.
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.5
+      forward_sampling_distance: 0.4
+      rotate_to_heading_angular_vel: 0.5
+      max_angular_accel: 2.0
+      simulate_ahead_time: 1.0
       debug_trajectory_details: false
-      min_vel_x: -0.08
+      min_vel_x: 0.0                    # forward only: backing up is a BT recovery
       min_vel_y: 0.0
       max_vel_x: 0.15
       max_vel_y: 0.0
@@ -194,9 +199,8 @@ controller_server:
       trans_stopped_velocity: 0.05
       short_circuit_trajectory_evaluation: true
       stateful: true
-      critics: ["Oscillation", "ObstacleFootprint", "PreferForward", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      critics: ["Oscillation", "ObstacleFootprint", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
       ObstacleFootprint.scale: 0.3       # steer away from cost, not only from lethal
-      PreferForward.scale: 5.0
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0

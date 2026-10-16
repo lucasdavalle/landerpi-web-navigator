@@ -5,7 +5,10 @@
   high posture) the default kept cycling recoveries for about 3 minutes; with
   2 the goal fails in well under a minute and the web shows it.
   Stage 6c: a ControllerSelector picks FollowPath (standing) or
-  FollowPathCrouched (arm low) from /a7/controller_selector.
+  FollowPathCrouched (arm low) from /a7/controller_selector. When the
+  controller fails (typically: turning towards the path would sweep the
+  crouched arm into something), the robot backs up 15 cm to make room and
+  tries again, up to 4 times: reverse only to reposition (user decision).
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -18,9 +21,12 @@
           </RecoveryNode>
         </RateController>
         <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="/a7/controller_selector"/>
-        <RecoveryNode number_of_retries="1" name="FollowPath">
+        <RecoveryNode number_of_retries="4" name="FollowPath">
           <FollowPath path="{path}" controller_id="{selected_controller}"/>
-          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Sequence name="MakeRoom">
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <BackUp backup_dist="0.15" backup_speed="0.05"/>
+          </Sequence>
         </RecoveryNode>
       </PipelineSequence>
       <ReactiveFallback name="RecoveryFallback">

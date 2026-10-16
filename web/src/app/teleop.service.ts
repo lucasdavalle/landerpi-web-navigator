@@ -21,12 +21,20 @@ const KEYS: Record<string, Command> = {
  * "teleop" and block Nav2 forever. Any key also cancels a navigation goal
  * (gateway side). Losing the keyboard (window blur, tab hidden) releases
  * every key, so the robot never keeps going with nobody pressing.
+ *
+ * The 100 ms tick comes from a Web Worker, not setInterval: browsers slow a
+ * hidden tab's timers down to about one every 1-2 s, which tripped the
+ * deadman every 2 s while the user watched the robot instead of the page
+ * (6c test bag). A worker's timer is not throttled, so a navigation goes on
+ * with the page in the background (user decision); closing the tab or
+ * losing the connection still stops the robot.
  */
 @Injectable({ providedIn: 'root' })
 export class TeleopService {
   private readonly socket = inject(RobotSocket);
   private readonly pressed = new Set<string>();
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private ticker: Worker | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;  // fallback
   private tick = 0;
   private wasMoving = false;
 
@@ -92,22 +100,41 @@ export class TeleopService {
     this.command.set({ vx: c.vx * 0.25 * s, vy: c.vy * 0.25 * s, wz: c.wz * 1.0 * s });
   }
 
+  private onTick(): void {
+    if (!this.isDriver()) return;
+    if (this.tick++ % 2 === 0) this.socket.send({ type: 'heartbeat' });
+    const c = this.command();
+    const moving = c.vx !== 0 || c.vy !== 0 || c.wz !== 0;
+    if (moving || this.wasMoving) {
+      this.socket.send({ type: 'teleop', ...c });  // the last one is the zero
+    }
+    this.wasMoving = moving;
+  }
+
   private startLoop(): void {
-    if (this.timer) return;
+    if (this.ticker || this.timer) return;
     this.tick = 0;
-    this.timer = setInterval(() => {
-      if (!this.isDriver()) return;
-      if (this.tick++ % 2 === 0) this.socket.send({ type: 'heartbeat' });
-      const c = this.command();
-      const moving = c.vx !== 0 || c.vy !== 0 || c.wz !== 0;
-      if (moving || this.wasMoving) {
-        this.socket.send({ type: 'teleop', ...c });  // the last one is the zero
-      }
-      this.wasMoving = moving;
-    }, 100);
+    try {
+      const src = 'let id = null; onmessage = (e) => {'
+        + ' if (e.data === "start" && id === null) id = setInterval(() => postMessage(0), 100);'
+        + ' if (e.data === "stop") { clearInterval(id); id = null; } };';
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      this.ticker = new Worker(url);
+      this.ticker.onmessage = () => this.onTick();
+      this.ticker.postMessage('start');
+    } catch {
+      // No workers (very old browser): throttled in the background, but works.
+      this.ticker = null;
+      this.timer = setInterval(() => this.onTick(), 100);
+    }
   }
 
   private stopLoop(): void {
+    if (this.ticker) {
+      this.ticker.postMessage('stop');
+      this.ticker.terminate();
+      this.ticker = null;
+    }
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
